@@ -1,0 +1,26 @@
+{
+  "name": "used-car",
+  "version": "0.1.0",
+  "description": "중고차 가격 객관성 검증 도구 (엔카 시세 수집 + 가격 적정성 비교 CLI)",
+  "private": true,
+  "type": "commonjs",
+  "main": "dist/index.js",
+  "scripts": {
+    "start": "ts-node src/index.ts",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "commander": "^14.0.3"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.19.0",
+    "ts-node": "^10.9.2",
+    "typescript": "~5.9.3"
+  }
+}

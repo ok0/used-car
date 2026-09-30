@@ -1,0 +1,10 @@
+.claude
+.reference
+data/*.db
+data/*.db-journal
+dist/
+node_modules/
+.env
+
+PLAN.md
+PRD.md

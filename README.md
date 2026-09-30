@@ -128,4 +128,4 @@ npx ts-node src/index.ts compare --platform kcar \
 
 ## 환경변수
 
-`.env`(또는 실행 시 `VAR=값`)로 설정합니다. 종류와 기본값은 `.env.example`을, 점수·판정 방식과 한계 등 자세한 설명은 [GUIDE.md](GUIDE.md)를 참고하세요.
+`.env`(또는 실행 시 `VAR=값`)로 설정합니다. 종류와 기본값은 `.env.example`을, 점수·판정 방식과 한계 등 자세한 설명은 [GUIDE.md](GUIDE.md)를 참고.
