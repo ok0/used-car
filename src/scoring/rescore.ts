@@ -4,20 +4,20 @@ import { hasValidDetail } from '../crawler/detail-parsers';
 import { buildScoreInput, calculateScore, DEFAULT_WEIGHTS } from './calculator';
 import type { AccidentRecord, LocalPriceBaseline, ScoreResult, ScoreWeights, VehicleData, YearlyPrice } from '../types';
 
-export function localBaselineFor(v: VehicleData): LocalPriceBaseline | null {
+export function localBaselineFor(v: VehicleData, now: Date = new Date()): LocalPriceBaseline | null {
   return getLocalPriceBaseline({
     carId: v.carId, modelGroup: v.modelGroup, modelName: v.modelName, gradeName: v.gradeName,
     gradeDetail: hasValidDetail(v.gradeDetail) ? v.gradeDetail : null,
     powertrainCluster: v.powertrainCluster, year: v.year,
-  });
+  }, now);
 }
 
-/** 수집 직후 1대 채점 (collect에서 upsert 전후 호출; 결과는 잠정치 — 수집 종료 후 rescoreAll 필수) */
+/** 수집 직후 1대 채점 (collect에서 upsert 전후 호출; 결과는 잠정치 — 수집 종료 후 rescoreAll 필수). 기준평균은 now 기준 STALE_DAYS 이상 미확인 매물을 제외. */
 export function scoreVehicle(
   vehicle: VehicleData, accidents: AccidentRecord[], yearlyPrices: YearlyPrice[],
   weights: ScoreWeights = DEFAULT_WEIGHTS, now: Date = new Date(),
 ): ScoreResult {
-  return calculateScore(buildScoreInput(vehicle, accidents, yearlyPrices, localBaselineFor(vehicle)), weights, now);
+  return calculateScore(buildScoreInput(vehicle, accidents, yearlyPrices, localBaselineFor(vehicle, now)), weights, now);
 }
 
 export interface RescoreSummary { total: number; changed: number; }

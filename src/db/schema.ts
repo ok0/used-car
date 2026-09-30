@@ -67,7 +67,8 @@ CREATE TABLE IF NOT EXISTS vehicles (
   score_breakdown         TEXT,
   score_penalty           INTEGER,
   collected_at            TEXT NOT NULL,
-  search_query            TEXT
+  search_query            TEXT,
+  last_seen_at            TEXT
 );
 
 CREATE TABLE IF NOT EXISTS accidents (
@@ -130,17 +131,19 @@ CREATE INDEX IF NOT EXISTS idx_usage_history_car_id   ON usage_history(car_id);
 CREATE INDEX IF NOT EXISTS idx_yearly_prices_car_id   ON yearly_prices(car_id);
 `;
 
-const COLUMN_MIGRATIONS: readonly { table: string; column: string; ddl: string }[] = [
+const COLUMN_MIGRATIONS: readonly { table: string; column: string; ddl: string; backfill?: (db: Database.Database) => void }[] = [
   { table: 'vehicles', column: 'options_status', ddl: 'ALTER TABLE vehicles ADD COLUMN options_status TEXT' },
   { table: 'vehicle_options', column: 'option_name', ddl: 'ALTER TABLE vehicle_options ADD COLUMN option_name TEXT' },
   { table: 'vehicle_options', column: 'option_raw', ddl: 'ALTER TABLE vehicle_options ADD COLUMN option_raw TEXT' },
+  { table: 'vehicles', column: 'last_seen_at', ddl: 'ALTER TABLE vehicles ADD COLUMN last_seen_at TEXT',
+    backfill: (db) => { db.prepare('UPDATE vehicles SET last_seen_at = ? WHERE last_seen_at IS NULL').run(new Date().toISOString()); } },
 ];
 
 export function initSchema(db: Database.Database): void {
   db.exec(SCHEMA_SQL);
   for (const m of COLUMN_MIGRATIONS) {
     if (!(db.prepare(`PRAGMA table_info(${m.table})`).all() as { name: string }[]).some(c => c.name === m.column)) {
-      db.exec(m.ddl);
+      db.transaction(() => { db.exec(m.ddl); m.backfill?.(db); })();
     }
   }
 }

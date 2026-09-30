@@ -79,6 +79,7 @@ export interface VehicleData {
   scorePenalty: number | null;
   collectedAt: string;
   searchQuery: string | null;
+  lastSeenAt: string | null; // 엔카 목록에서 마지막으로 확인된 시각 (ISO 8601 UTC)
 }
 
 export interface AccidentRecord {
@@ -111,6 +112,7 @@ export interface VehicleFilters {
   minScore?: number;
   sort?: VehicleSortField;
   limit?: number;
+  excludeStaleAsOf?: Date; // 지정 시 이 시각 기준 STALE_DAYS 이상 미확인 매물 제외
 }
 export interface SimilarSearchOptions {
   gradeName?: string | null;
@@ -126,6 +128,10 @@ export interface SummaryStats {
   priceMax: number | null;
   priceAvg: number | null;
   scoreAvg: number | null;
+  activeCount: number;
+  staleCount: number;
+  staleDays: number;
+  lastSeenAt: string | null;
 }
 
 export type ComparePlatform = 'heydealer' | 'kcar' | 'hyundai_certified';

@@ -1,5 +1,5 @@
 import { type VehicleSortField } from '../types';
-import { findVehicles } from '../db/repository';
+import { findVehicles, getStaleDays, staleCutoffIso, isStaleVehicle } from '../db/repository';
 import { summaryCommand } from './summary';
 import { fmtManwon, fmtKm, fmtYearMonth, fmtPoints, truncateDisplay, padDisplay, displayWidth } from './format';
 
@@ -13,6 +13,8 @@ const SORT_LABEL: Record<VehicleSortField, string> = {
 };
 
 export function listCommand(opts: ListOptions): number {
+  const staleDays = getStaleDays();
+  const cutoff = staleCutoffIso(new Date(), staleDays);
   const all = findVehicles({ model: opts.model, minScore: opts.minScore, sort: opts.sort });
   const shown = all.slice(0, opts.limit);
 
@@ -31,8 +33,8 @@ export function listCommand(opts: ListOptions): number {
   console.log(`🔎 조건: ${conds.join(' | ')}`);
   console.log();
 
-  const headers = ['#', '매물ID', '모델', '연식', '주행거리', '가격', '등급', '점수'];
-  const aligns: ('left' | 'right')[] = ['right', 'left', 'left', 'left', 'right', 'right', 'left', 'right'];
+  const headers = ['#', '매물ID', '모델', '연식', '주행거리', '가격', '등급', '점수', '확인'];
+  const aligns: ('left' | 'right')[] = ['right', 'left', 'left', 'left', 'right', 'right', 'left', 'right', 'left'];
 
   const rows: string[][] = shown.map((v, i) => [
     String(i + 1),
@@ -43,6 +45,7 @@ export function listCommand(opts: ListOptions): number {
     fmtManwon(v.price),
     v.scoreGrade ?? '-',
     v.scoreTotal == null ? '-' : fmtPoints(v.scoreTotal),
+    isStaleVehicle(v, cutoff) ? '미확인' : '',
   ]);
 
   const widths: number[] = [];
@@ -68,6 +71,9 @@ export function listCommand(opts: ListOptions): number {
     summary += ' (더 보려면 --limit 조정)';
   }
   console.log(summary);
+
+  const staleAll = all.filter((v) => isStaleVehicle(v, cutoff)).length;
+  if (staleAll > 0) console.log(`※ 미확인 ${staleAll}대: 엔카 목록에서 ${staleDays}일 이상 확인되지 않은 매물 — 비교·시세·가격 점수 기준에서 제외 (정리: npx ts-node src/index.ts purge)`);
 
   return 0;
 }

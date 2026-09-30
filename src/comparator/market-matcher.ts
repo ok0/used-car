@@ -195,6 +195,6 @@ export function matchPeers(input: CompareInput, candidates: VehicleData[], confi
   return { criteria, basePool, peers };
 }
 
-export function findMarketPeers(input: CompareInput, config: MatchConfig = getMatchConfigFromEnv()): MarketMatch {
-  return matchPeers(input, findVehicles(), config);
+export function findMarketPeers(input: CompareInput, config: MatchConfig = getMatchConfigFromEnv(), now: Date = new Date()): MarketMatch {
+  return matchPeers(input, findVehicles({ excludeStaleAsOf: now }), config);
 }

@@ -4,6 +4,7 @@ import {
   findVehicleById, hasVehicle, upsertVehicle, upsertAccidents, upsertOptions,
   upsertOwnerChanges, upsertUsageHistory, upsertMarketPrice, upsertYearlyPrices,
   getYearlyPricesByCarId, updateVehicleScore, getCarIdsBySearchQuery, deleteVehiclesOwnedBy,
+  markVehiclesSeen, getStaleDays, staleCutoffIso, countStaleVehicles,
 } from '../db/repository';
 import { parseEncarSearchUrl } from '../crawler/url-parser';
 import { crawlList, type CrawlListOptions } from '../crawler/list-crawler';
@@ -13,6 +14,7 @@ import {
 } from '../crawler/detail-crawler';
 import { BlockedError } from '../crawler/fetch-helper';
 import { scoreVehicle, rescoreAll, type RescoreSummary } from '../scoring/rescore';
+import { DEFAULT_WEIGHTS } from '../scoring/calculator';
 import { GRADES, type CollectedVehicle, type Grade, type ScoreResult, type SearchResult } from '../types';
 import { fmtManwon, fmtYY, fmtGradeDistribution, vehicleLabel } from './format';
 
@@ -33,6 +35,7 @@ export interface CollectDeps {
   crawlList: (searchQuery: string, options: CrawlListOptions) => Promise<SearchResult[]>;
   crawlDetails: (items: SearchResult[], opts: CrawlDetailsOptions) => Promise<CrawlDetailsResult>;
   log: (line: string) => void;
+  now?: () => Date;
 }
 export const defaultCollectDeps: CollectDeps = { crawlList, crawlDetails, log: (l) => console.log(l) };
 export type CollectStatus = 'completed' | 'blocked' | 'interrupted';
@@ -42,6 +45,14 @@ export interface CollectReport {
   saved: string[]; failed: { carId: string; error: string }[];
   rescored: RescoreSummary | null;
   prune: PruneReport | null;
+  seenUpdated: number;
+  stale: { days: number; count: number } | null;
+}
+
+function staleSummary(now: Date): { days: number; count: number } | null {
+  const days = getStaleDays();
+  if (days === 0) return null;
+  return { days, count: countStaleVehicles(staleCutoffIso(now, days)!) };
 }
 
 export function saveCollectedVehicle(b: CollectedVehicle, opts: { replaceYearly: boolean }): ScoreResult {
@@ -139,6 +150,7 @@ export async function runCollect(
     throw new Error(`--prune은 ${bad.join(', ')} 와 함께 쓸 수 없습니다 — 목록 전체를 수집하는 실행에서만 삭제할 수 있습니다`);
   }
   const log = deps.log;
+  const nowFn = deps.now ?? ((): Date => new Date());
   const replaceYearly = isYearlyFetchEnabled();
 
   log(`🔍 검색 조건: ${searchQuery}`);
@@ -153,6 +165,9 @@ export async function runCollect(
   if (startPage > 1) log(`ℹ 시작 페이지: ${startPage} (--start-page)`);
   const listed = await deps.crawlList(searchQuery, { startPage, maxPages: opts.maxPages, log: (l) => log(`  ${l}`) });
 
+  const seenUpdated = markVehiclesSeen(listed.map((r) => r.carId), nowFn().toISOString());
+  if (seenUpdated > 0) log(`  목록 확인: DB에 있던 ${seenUpdated}대의 마지막 확인 시각 갱신`);
+
   const report: CollectReport = {
     status: 'completed',
     searchQuery,
@@ -163,6 +178,8 @@ export async function runCollect(
     failed: [],
     rescored: null,
     prune: null,
+    seenUpdated,
+    stale: null,
   };
 
   let targets = listed;
@@ -183,6 +200,7 @@ export async function runCollect(
 
   if (shouldStop()) {
     report.status = 'interrupted';
+    report.stale = staleSummary(nowFn());
     return report;
   }
 
@@ -233,9 +251,10 @@ export async function runCollect(
   if (report.saved.length > 0 || (report.prune?.deleted.length ?? 0) > 0) {
     log('');
     log('🔄 DB 전체 재채점 중...');
-    report.rescored = rescoreAll();
+    report.rescored = rescoreAll(DEFAULT_WEIGHTS, nowFn());
   }
 
+  report.stale = staleSummary(nowFn());
   return report;
 }
 
@@ -245,6 +264,12 @@ function pruneSummaryLine(p: PruneReport | null): string | null {
   if (p.mode === 'report') return p.candidates.length > 0 ? `   이번 목록에 없던 기존 매물 ${p.candidates.length}대는 DB에 남아 있습니다 (삭제하려면 --prune)` : null;
   if (p.candidates.length === 0) return '   정리(--prune): 이번 목록에 없던 기존 매물 없음';
   return `   정리(--prune): ${p.deleted.length}대 삭제${p.recheckFound > 0 ? `, 재확인에서 다시 보인 ${p.recheckFound}대 유지` : ''}${p.backupPath !== null ? ` (삭제 전 백업: ${p.backupPath})` : ''}`;
+}
+
+function staleLine(r: CollectReport): string | null {
+  return r.stale && r.stale.count > 0
+    ? `   ℹ ${r.stale.days}일 이상 엔카 목록에서 확인되지 않은 매물 ${r.stale.count}대 — 비교·시세·가격 점수 기준에서 제외 중 (확인·삭제: npx ts-node src/index.ts purge)`
+    : null;
 }
 
 export function printCollectReport(r: CollectReport, log: (line: string) => void = console.log): void {
@@ -262,6 +287,8 @@ export function printCollectReport(r: CollectReport, log: (line: string) => void
   if (r.status === 'completed' && r.targeted === 0) {
     log(`ℹ 상세 수집 대상이 없습니다 (검색 결과 ${r.listed}대, 기존 제외 ${r.skippedExisting}대).`);
     if (pruneLine !== null) log(pruneLine);
+    const sl = staleLine(r);
+    if (sl !== null) log(sl);
     if (r.rescored) log(`   재채점: DB 전체 ${r.rescored.total}대 중 ${r.rescored.changed}대 점수 변경`);
     return;
   }
@@ -286,6 +313,8 @@ export function printCollectReport(r: CollectReport, log: (line: string) => void
   }
 
   if (pruneLine !== null) log(pruneLine);
+  const sl = staleLine(r);
+  if (sl !== null) log(sl);
 
   if (r.failed.length > 0) {
     log(`   실패 목록 (${r.failed.length}대):`);

@@ -8,6 +8,8 @@ import { summaryCommand } from './cli/summary';
 import { listCommand } from './cli/list';
 import { detailCommand } from './cli/detail';
 import { compareCommand, type CompareCliOptions } from './cli/compare';
+import { purgeCommand } from './cli/purge';
+import { getStaleDays } from './db/repository';
 
 const program = new Command();
 
@@ -81,6 +83,12 @@ program
   .action((carId: string) => runCommand(() => detailCommand(carId)));
 
 program
+  .command('purge')
+  .description('엔카 목록에서 STALE_DAYS(기본 14)일 이상 확인되지 않은 매물을 DB에서 삭제. 기본은 대상만 표시하고, --apply 일 때만 삭제(삭제 직전 data/used-car.purge-backup.db 로 자동 백업, 전체의 50% 초과 시 중단)')
+  .option('--apply', '실제로 삭제 (되돌릴 수 없음, 백업 파일로만 복구 가능)')
+  .action((opts: { apply?: boolean }) => runCommand(() => purgeCommand({ apply: opts.apply === true })));
+
+program
   .command('compare')
   .description('헤이딜러/케이카/현대 인증중고차 매물의 가격 적정성을 엔카 동급매물과 비교')
   .option('--url <url>', '헤이딜러 또는 현대 인증중고차 상세 페이지 URL')
@@ -98,6 +106,13 @@ program
   .option('--no-rental', '렌트 이력 없음')
   .option('--inspection <summary>', '성능점검 요약 (e.g., "무사고", "교환 1 판금 1")')
   .action((opts: CompareCliOptions) => runCommand(() => compareCommand(opts)));
+
+try {
+  getStaleDays();
+} catch (err) {
+  console.error(`❌ ${err instanceof Error ? err.message : String(err)}`);
+  process.exit(1);
+}
 
 getDb();
 

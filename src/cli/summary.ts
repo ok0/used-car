@@ -20,10 +20,12 @@ export function summaryCommand(): number {
   const priceAvg = s.priceAvg;
 
   console.log('📊 수집 현황');
-  console.log(`  총 매물: ${fmtNum(total)}대 | 마지막 수집: ${fmtKst(s.lastCollectedAt)}`);
+  console.log(`  총 매물: ${fmtNum(total)}대${s.staleDays > 0 ? ` (활성 ${fmtNum(s.activeCount)}대 | ${s.staleDays}일 이상 미확인 ${fmtNum(s.staleCount)}대)` : ''} | 마지막 수집: ${fmtKst(s.lastCollectedAt)} | 마지막 목록 확인: ${fmtKst(s.lastSeenAt)}`);
+  if (s.staleCount > 0) console.log(`  ※ 아래 통계는 활성 매물 기준입니다. 미확인 매물은 비교·시세·가격 점수 기준에서 제외되며, 확인·삭제는 npx ts-node src/index.ts purge`);
+  if (s.activeCount === 0) console.log('  ⚠ 모든 매물이 미확인 상태입니다 — 계속 볼 검색 URL로 다시 collect 하세요');
   let gradeLine = `  등급 분포: ${fmtGradeDistribution(s.gradeDistribution)}`;
-  if (total - graded > 0) {
-    gradeLine += ` | 미채점: ${total - graded}대`;
+  if (s.activeCount - graded > 0) {
+    gradeLine += ` | 미채점: ${s.activeCount - graded}대`;
   }
   console.log(gradeLine);
   console.log(`  평균 점수: ${scoreAvg == null ? '-' : scoreAvg.toFixed(1) + '점'}`);

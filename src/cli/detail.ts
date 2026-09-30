@@ -1,6 +1,6 @@
 import {
   findVehicleById, getAccidentsByCarId, getOptionsByCarId, getOwnerChangesByCarId, getUsageHistoryByCarId,
-  getMarketPriceByCarId, getYearlyPricesByCarId,
+  getMarketPriceByCarId, getYearlyPricesByCarId, getStaleDays, staleCutoffIso, isStaleVehicle,
 } from '../db/repository';
 import { localBaselineFor } from '../scoring/rescore';
 import { resolvePriceBaseline, MIN_LOCAL_PRICE_SAMPLES } from '../scoring/price';
@@ -36,6 +36,9 @@ export function detailCommand(carId: string): number {
   console.log(`  지역: ${v.region ?? '-'} | 판매유형: ${v.sellType ?? '-'} | 리스: ${v.leaseType ?? '-'}`);
   console.log(`  최초등록: ${v.firstRegistrationDate ?? '-'} | 최초광고: ${v.firstAdvertisedAt ?? '-'}`);
   console.log(`  수집 시각: ${fmtKst(v.collectedAt)} | 검색조건: ${v.searchQuery ?? '-'}`);
+  const staleDays = getStaleDays();
+  const stale = isStaleVehicle(v, staleCutoffIso(new Date(), staleDays));
+  console.log(`  마지막 목록 확인: ${fmtKst(v.lastSeenAt)}${stale ? ` ⚠ ${staleDays}일 이상 엔카 목록에서 확인되지 않음 — 판매 완료 가능성. 비교·시세·가격 점수 기준에서 제외 중 (정리: purge)` : ''}`);
   console.log();
 
   console.log('[품질 점수]');

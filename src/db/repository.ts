@@ -7,6 +7,28 @@ import {
 
 type SqlValue = string | number | null;
 
+export const DEFAULT_STALE_DAYS = 14;
+/** STALE_DAYS: 0 이상의 정수. 비우면 14, 0이면 미확인 제외·purge 끔 */
+export function getStaleDays(env: NodeJS.ProcessEnv = process.env): number {
+  const raw = (env.STALE_DAYS ?? '').trim();
+  if (raw === '') return DEFAULT_STALE_DAYS;
+  if (!/^\d+$/.test(raw)) throw new Error(`STALE_DAYS는 0 이상의 정수여야 합니다: ${raw}`);
+  return Number(raw);
+}
+/** now - days 의 ISO 시각. last_seen_at <= 이 값이면 미확인(stale). days=0이면 null(끔) */
+export function staleCutoffIso(now: Date = new Date(), days: number = getStaleDays()): string | null {
+  return days === 0 ? null : new Date(now.getTime() - days * 86_400_000).toISOString();
+}
+/** 미확인 판정 SQL (NULL은 활성 취급) */
+const STALE_SQL = 'last_seen_at <= ?';
+const ACTIVE_SQL = '(last_seen_at IS NULL OR last_seen_at > ?)';
+function pushActive(where: string[], params: SqlValue[], cutoff: string | null): void {
+  if (cutoff !== null) { where.push(ACTIVE_SQL); params.push(cutoff); }
+}
+export function isStaleVehicle(v: Pick<VehicleData, 'lastSeenAt'>, cutoff: string | null): boolean {
+  return cutoff !== null && v.lastSeenAt !== null && v.lastSeenAt <= cutoff;
+}
+
 const VEHICLE_FIELDS = [
   'carId', 'actualCarId', 'vehicleNo',
   'manufacturer', 'modelGroup', 'modelName', 'gradeName', 'gradeDetail', 'powertrainCluster', 'isDomestic',
@@ -21,7 +43,7 @@ const VEHICLE_FIELDS = [
   'hasRentalHistory', 'hasUsageChange',
   'dealerUserId', 'dealerName', 'dealerFirmName', 'dealerJoinedAt', 'dealerTotalSales',
   'scoreTotal', 'scoreGrade', 'scoreBreakdown', 'scorePenalty',
-  'collectedAt', 'searchQuery',
+  'collectedAt', 'searchQuery', 'lastSeenAt',
 ] as const satisfies readonly (keyof VehicleData)[];
 
 type MissingVehicleField = Exclude<keyof VehicleData, (typeof VEHICLE_FIELDS)[number]>;
@@ -142,6 +164,7 @@ export function findVehicles(filters: VehicleFilters = {}): VehicleData[] {
     for (const t of tokenize(filters.model)) { where.push(`${SEARCH_TEXT_EXPR} LIKE ?`); params.push(`%${t}%`); }
   }
   if (filters.minScore !== undefined) { where.push('score_total >= ?'); params.push(filters.minScore); }
+  if (filters.excludeStaleAsOf !== undefined) pushActive(where, params, staleCutoffIso(filters.excludeStaleAsOf));
   let sql = 'SELECT * FROM vehicles';
   if (where.length) sql += ` WHERE ${where.join(' AND ')}`;
   sql += ` ORDER BY ${SORT_SQL[filters.sort ?? 'score']}, car_id ASC`;
@@ -168,31 +191,52 @@ export function findSimilarVehicles(
   return rows.map(rowToVehicle);
 }
 
-export function getSummary(): SummaryStats {
+export function getSummary(now: Date = new Date()): SummaryStats {
   const db = getDb();
-  const base = db.prepare(
-    `SELECT COUNT(*) AS totalCount, MAX(collected_at) AS lastCollectedAt,
-            MIN(price) AS priceMin, MAX(price) AS priceMax, AVG(price) AS priceAvg, AVG(score_total) AS scoreAvg
+  const staleDays = getStaleDays();
+  const cutoff = staleCutoffIso(now, staleDays);
+  const aw: string[] = [];
+  const ap: SqlValue[] = [];
+  pushActive(aw, ap, cutoff);
+  const activeWhere = aw.length ? `WHERE ${aw.join(' AND ')}` : '';
+  const counts = db.prepare(
+    `SELECT COUNT(*) AS totalCount, MAX(collected_at) AS lastCollectedAt, MAX(last_seen_at) AS lastSeenAt,
+            COALESCE(SUM(CASE WHEN ${STALE_SQL} THEN 1 ELSE 0 END), 0) AS staleCount
      FROM vehicles`
-  ).get() as {
-    totalCount: number; lastCollectedAt: string | null; priceMin: number | null;
-    priceMax: number | null; priceAvg: number | null; scoreAvg: number | null;
-  };
+  ).get(cutoff) as { totalCount: number; lastCollectedAt: string | null; lastSeenAt: string | null; staleCount: number };
+  const priceStats = db.prepare(
+    `SELECT MIN(price) AS priceMin, MAX(price) AS priceMax, AVG(price) AS priceAvg, AVG(score_total) AS scoreAvg
+     FROM vehicles ${activeWhere}`
+  ).get(...ap) as { priceMin: number | null; priceMax: number | null; priceAvg: number | null; scoreAvg: number | null };
   const modelDistribution = db.prepare(
     `SELECT TRIM(COALESCE(model_name,'') || ' ' || COALESCE(grade_name,'')) AS label, COUNT(*) AS count
-     FROM vehicles GROUP BY label ORDER BY count DESC, label ASC LIMIT 10`
-  ).all() as { label: string; count: number }[];
+     FROM vehicles ${activeWhere} GROUP BY label ORDER BY count DESC, label ASC LIMIT 10`
+  ).all(...ap) as { label: string; count: number }[];
+  const gradeWhere = aw.length ? `WHERE ${aw.join(' AND ')} AND score_grade IS NOT NULL` : 'WHERE score_grade IS NOT NULL';
   const gradeRows = db.prepare(
-    `SELECT score_grade AS grade, COUNT(*) AS count FROM vehicles WHERE score_grade IS NOT NULL GROUP BY score_grade`
-  ).all() as { grade: string; count: number }[];
+    `SELECT score_grade AS grade, COUNT(*) AS count FROM vehicles ${gradeWhere} GROUP BY score_grade`
+  ).all(...ap) as { grade: string; count: number }[];
   const gradeDistribution = Object.fromEntries(GRADES.map((g) => [g, 0])) as Record<Grade, number>;
   for (const r of gradeRows) {
     if ((GRADES as readonly string[]).includes(r.grade)) gradeDistribution[r.grade as Grade] = r.count;
   }
-  return { ...base, modelDistribution, gradeDistribution };
+  return {
+    totalCount: counts.totalCount,
+    lastCollectedAt: counts.lastCollectedAt,
+    modelDistribution,
+    gradeDistribution,
+    priceMin: priceStats.priceMin,
+    priceMax: priceStats.priceMax,
+    priceAvg: priceStats.priceAvg,
+    scoreAvg: priceStats.scoreAvg,
+    activeCount: counts.totalCount - counts.staleCount,
+    staleCount: counts.staleCount,
+    staleDays,
+    lastSeenAt: counts.lastSeenAt,
+  };
 }
 
-export function getLocalPriceBaseline(key: PriceBaselineKey): LocalPriceBaseline | null {
+export function getLocalPriceBaseline(key: PriceBaselineKey, now: Date = new Date()): LocalPriceBaseline | null {
   if (!key.modelGroup || !(key.year > 0)) return null;
   const where: string[] = [
     'model_group = ?', 'year = ?', 'car_id <> ?',
@@ -202,6 +246,7 @@ export function getLocalPriceBaseline(key: PriceBaselineKey): LocalPriceBaseline
     'is_duplication = 0',
   ];
   const params: SqlValue[] = [key.modelGroup, key.year, key.carId];
+  pushActive(where, params, staleCutoffIso(now));
   if (key.modelName) { where.push('model_name = ?'); params.push(key.modelName); }
   if (key.gradeName) {
     if (key.powertrainCluster) { where.push('powertrain_cluster = ?'); params.push(key.powertrainCluster); }
@@ -308,4 +353,50 @@ export function deleteVehiclesOwnedBy(searchQuery: string, carIds: readonly stri
   }
   const del = db.prepare('DELETE FROM vehicles WHERE car_id = ? AND search_query = ?');
   return db.transaction((): string[] => carIds.filter((id) => del.run(id, searchQuery).changes > 0))();
+}
+
+/** 목록에서 본 매물의 last_seen_at 갱신 (DB에 없는 id는 무시). 갱신 행 수 반환 */
+export function markVehiclesSeen(carIds: readonly string[], seenAt: string): number {
+  const db = getDb();
+  let changed = 0;
+  db.transaction(() => {
+    for (let i = 0; i < carIds.length; i += 500) {
+      const chunk = carIds.slice(i, i + 500);
+      changed += db.prepare(`UPDATE vehicles SET last_seen_at = ? WHERE car_id IN (${chunk.map(() => '?').join(', ')})`).run(seenAt, ...chunk).changes;
+    }
+  })();
+  return changed;
+}
+
+export function countVehicles(): number {
+  return (getDb().prepare('SELECT COUNT(*) AS c FROM vehicles').get() as { c: number }).c;
+}
+
+export function countStaleVehicles(cutoff: string): number {
+  return (getDb().prepare(`SELECT COUNT(*) AS c FROM vehicles WHERE ${STALE_SQL}`).get(cutoff) as { c: number }).c;
+}
+
+export function getStaleCarIds(cutoff: string): string[] {
+  return (getDb().prepare(`SELECT car_id FROM vehicles WHERE ${STALE_SQL} ORDER BY last_seen_at ASC, car_id ASC`).all(cutoff) as { car_id: string }[]).map((r) => r.car_id);
+}
+
+export interface StaleBreakdownRow {
+  label: string; total: number; stale: number; lastSeenMax: string | null;
+}
+
+export function getStaleBreakdown(cutoff: string): StaleBreakdownRow[] {
+  return getDb().prepare(
+    `SELECT COALESCE(model_group, '(모델 미상)') AS label, COUNT(*) AS total,
+            SUM(CASE WHEN ${STALE_SQL} THEN 1 ELSE 0 END) AS stale,
+            MAX(CASE WHEN ${STALE_SQL} THEN last_seen_at END) AS lastSeenMax
+     FROM vehicles GROUP BY label HAVING stale > 0 ORDER BY stale DESC, label ASC`
+  ).all(cutoff, cutoff) as StaleBreakdownRow[];
+}
+
+/** 삭제 시점에도 여전히 미확인인 매물만 단일 트랜잭션으로 삭제 (자식 CASCADE). 실제 삭제 car_id 반환 */
+export function deleteStaleVehicles(carIds: readonly string[], cutoff: string): string[] {
+  const db = getDb();
+  if (db.pragma('foreign_keys', { simple: true }) !== 1) throw new Error('foreign_keys가 꺼진 연결에서는 매물을 삭제할 수 없습니다 (자식 테이블이 남음)');
+  const del = db.prepare(`DELETE FROM vehicles WHERE car_id = ? AND ${STALE_SQL}`);
+  return db.transaction((): string[] => carIds.filter((id) => del.run(id, cutoff).changes > 0))();
 }

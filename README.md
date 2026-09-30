@@ -93,6 +93,15 @@ detail <carId>
 
 매물의 상세 정보, 항목별 점수, 사고·성능점검·옵션 등을 출력합니다. `carId`는 `list`의 매물ID입니다.
 
+### purge
+
+엔카 목록에서 14일(STALE_DAYS) 이상 확인되지 않은 매물을 삭제합니다. 기본은 대상만 표시, `--apply`로 삭제(자동 백업, 전체 50% 초과 시 중단, 되돌릴 수 없음). 미확인 매물은 삭제 전에도 비교·시세·가격 점수 기준에서 제외됩니다.
+
+```bash
+npx ts-node src/index.ts purge
+npx ts-node src/index.ts purge --apply
+```
+
 ### compare
 
 엔카 동급 매물과 비교합니다. 먼저 같은 모델을 `collect` 해 두세요.

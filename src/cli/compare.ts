@@ -1,4 +1,4 @@
-import { getOptionNamesByCarIds, getSummary } from '../db/repository';
+import { getOptionNamesByCarIds, getSummary, getStaleDays, staleCutoffIso, countStaleVehicles } from '../db/repository';
 import { HttpError } from '../crawler/fetch-helper';
 import { fetchHeydealerInput } from '../crawler/heydealer-parser';
 import { fetchHyundaiCertifiedInput } from '../crawler/hyundai-certified-parser';
@@ -147,6 +147,10 @@ export async function compareCommand(opts: CompareCliOptions, now: Date = new Da
     const mil = matchConfig.mileageRatios === null ? '제한 없음' : matchConfig.mileageRatios.map((r) => `±${Math.round(r * 100)}%`).join(' → ');
     console.log(`ℹ 동급 조건(환경변수): 연식 ±${matchConfig.yearRange}년 | 주행거리 ${mil} | 최소 표본 ${matchConfig.minSamples}대`);
   }
+  if ((process.env.STALE_DAYS ?? '').trim() !== '') {
+    const d = getStaleDays();
+    console.log(`ℹ 미확인 매물 제외(STALE_DAYS): ${d === 0 ? '꺼짐' : `엔카 목록에서 ${d}일 이상 확인되지 않은 매물 제외`}`);
+  }
   let input: CompareInput;
   if (opts.url) {
     const site = detectUrlPlatform(opts.url);
@@ -189,10 +193,13 @@ export async function compareCommand(opts: CompareCliOptions, now: Date = new Da
     return 1;
   }
 
-  const match = findMarketPeers(input, matchConfig);
+  const match = findMarketPeers(input, matchConfig, now);
   if (match.peers.length === 0) {
     console.error(`❌ 동급매물을 찾지 못했습니다: 모델 "${input.model}", 연식 ${fmtYY(match.criteria.yearFrom)}~${fmtYY(match.criteria.yearTo)}년식`);
-    const anyYear = findMarketPeers(input, { ...matchConfig, yearRange: 99 });
+    const sc = staleCutoffIso(now);
+    const staleN = sc === null ? 0 : countStaleVehicles(sc);
+    if (staleN > 0) console.error(`   (참고) 엔카 목록에서 ${getStaleDays()}일 이상 확인되지 않은 매물 ${staleN}대는 비교에서 제외됩니다 — 해당 검색 URL로 다시 collect 하세요.`);
+    const anyYear = findMarketPeers(input, { ...matchConfig, yearRange: 99 }, now);
     if (anyYear.basePool.length > 0) {
       const ys = anyYear.basePool.map((v) => v.year);
       console.error(`   모델은 일치하는 매물 ${anyYear.basePool.length}대가 있으나 연식 범위 밖입니다 (DB 연식 ${fmtYY(Math.min(...ys))}~${fmtYY(Math.max(...ys))}년식). COMPARE_YEAR_RANGE(현재 ±${matchConfig.yearRange}년)를 늘리거나 해당 연식 매물을 collect 하세요.`);

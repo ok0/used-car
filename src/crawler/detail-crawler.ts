@@ -183,6 +183,7 @@ export async function fetchCollectedVehicle(carId: string, opts: FetchDetailOpti
     scorePenalty: null,
     collectedAt,
     searchQuery: opts.searchQuery ?? null,
+    lastSeenAt: collectedAt,
   };
 
   // 5. Build CollectedVehicle
