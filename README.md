@@ -8,6 +8,7 @@
 - [설치](#설치)
 - [빠른 시작](#빠른-시작)
 - [명령어](#명령어)
+- [GUI](#gui)
 - [환경변수](#환경변수)
 
 ## 동작 방식
@@ -134,6 +135,22 @@ npx ts-node src/index.ts compare --platform kcar \
   --model "더 뉴 싼타페" --trim 프레스티지 --year 21 --month 5 \
   --mileage 80000 --price 2400 --accident-count 0 --owner-changes 1 --no-rental
 ```
+
+## GUI
+
+웹 브라우저로 대시보드·매물 목록·상세·비교를 조회합니다 (로컬 전용, DB 읽기 전용).
+
+```bash
+npm run gui
+# http://127.0.0.1:5174 에서 열림 (--no-open으로 자동 열기 방지)
+```
+
+옵션:
+- `--port <n>` / `GUI_PORT` 환경변수: 포트 변경 (기본 5174)
+- `--no-open`: 브라우저 자동 열기 안 함
+- `--dev`: 개발 모드 (Vite 5173, API 프록시)
+
+테스트용: `USED_CAR_DB=<복사본>` 로 다른 DB 사용.
 
 ## 환경변수
 

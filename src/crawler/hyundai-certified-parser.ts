@@ -1,4 +1,4 @@
-import { fetchText } from './fetch-helper';
+import { fetchText, InvalidUrlError } from './fetch-helper';
 import type { CompareInput, InspectionInfo, InputOptionItem, InputOptionPackage } from '../types';
 
 export interface HyundaiCertifiedParseResult { input: CompareInput; warnings: string[]; notes: string[]; }
@@ -353,11 +353,11 @@ export function parseHyundaiCertifiedHtml(html: string, url: string): HyundaiCer
   return { input, warnings, notes };
 }
 
-export async function fetchHyundaiCertifiedInput(url: string): Promise<HyundaiCertifiedParseResult> {
+export async function fetchHyundaiCertifiedInput(url: string, fetchHtml: (url: string) => Promise<string> = fetchText): Promise<HyundaiCertifiedParseResult> {
   const goodsNo = parseHyundaiCertifiedGoodsNo(url);
   if (!goodsNo) {
-    throw new Error(`현대 인증중고차 상세 URL 형식이 아닙니다 (https://certified.hyundai.com/p/goods/goodsDetail.do?goodsNo={매물번호}): ${url}`);
+    throw new InvalidUrlError(`현대 인증중고차 상세 URL 형식이 아닙니다 (https://certified.hyundai.com/p/goods/goodsDetail.do?goodsNo={매물번호}): ${url}`);
   }
-  const html = await fetchText(canonicalHyundaiCertifiedUrl(goodsNo));
+  const html = await fetchHtml(canonicalHyundaiCertifiedUrl(goodsNo));
   return parseHyundaiCertifiedHtml(html, url);
 }

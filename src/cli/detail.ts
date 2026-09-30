@@ -1,9 +1,4 @@
-import {
-  findVehicleById, getAccidentsByCarId, getOptionsByCarId, getOwnerChangesByCarId, getUsageHistoryByCarId,
-  getMarketPriceByCarId, getYearlyPricesByCarId, getStaleDays, staleCutoffIso, isStaleVehicle,
-} from '../db/repository';
-import { localBaselineFor } from '../scoring/rescore';
-import { resolvePriceBaseline, MIN_LOCAL_PRICE_SAMPLES } from '../scoring/price';
+import { getVehicleDetail } from '../services/vehicles';
 import { DEFAULT_WEIGHTS } from '../scoring/calculator';
 import {
   fmtNum, fmtManwon, fmtWon, fmtKm, fmtYearMonth, fmtKst, fmtPoints, fmtBool,
@@ -18,11 +13,12 @@ const USAGE_LABEL: Record<string, string> = {
 };
 
 export function detailCommand(carId: string): number {
-  const v = findVehicleById(carId);
-  if (!v) {
+  const d = getVehicleDetail(carId);
+  if (!d) {
     console.error(`❌ 매물을 찾을 수 없습니다: ${carId}`);
     return 1;
   }
+  const v = d.vehicle;
 
   console.log(`🚗 ${vehicleLabel(v)}${v.gradeDetail ? ' ' + v.gradeDetail : ''}`);
   console.log(`   매물 ID: ${carId}${v.actualCarId ? ` (실제 차량 ID: ${v.actualCarId})` : ''} | 차량번호: ${v.vehicleNo ?? '-'} | ${v.isDomestic ? '국산' : '수입'}`);
@@ -36,9 +32,8 @@ export function detailCommand(carId: string): number {
   console.log(`  지역: ${v.region ?? '-'} | 판매유형: ${v.sellType ?? '-'} | 리스: ${v.leaseType ?? '-'}`);
   console.log(`  최초등록: ${v.firstRegistrationDate ?? '-'} | 최초광고: ${v.firstAdvertisedAt ?? '-'}`);
   console.log(`  수집 시각: ${fmtKst(v.collectedAt)} | 검색조건: ${v.searchQuery ?? '-'}`);
-  const staleDays = getStaleDays();
-  const stale = isStaleVehicle(v, staleCutoffIso(new Date(), staleDays));
-  console.log(`  마지막 목록 확인: ${fmtKst(v.lastSeenAt)}${stale ? ` ⚠ ${staleDays}일 이상 엔카 목록에서 확인되지 않음 — 판매 완료 가능성. 비교·시세·가격 점수 기준에서 제외 중 (정리: purge)` : ''}`);
+  const staleDays = d.staleDays;
+  console.log(`  마지막 목록 확인: ${fmtKst(v.lastSeenAt)}${d.stale ? ` ⚠ ${staleDays}일 이상 엔카 목록에서 확인되지 않음 — 판매 완료 가능성. 비교·시세·가격 점수 기준에서 제외 중 (정리: purge)` : ''}`);
   console.log();
 
   console.log('[품질 점수]');
@@ -67,16 +62,15 @@ export function detailCommand(carId: string): number {
   console.log();
 
   console.log('[가격 기준]');
-  const yearly = getYearlyPricesByCarId(carId);
-  const local = localBaselineFor(v);
-  const pb = resolvePriceBaseline({ price: v.price, year: v.year, yearlyPoints: yearly.length ? yearly : null, localBaseline: local });
+  const yearly = d.yearlyPrices;
+  const pb = d.priceBaseline;
 
   if (pb.source === 'yearly') {
     console.log(`  출처: 엔카 연식별 시세 (yearly) | 기준 평균 ${fmtManwon(pb.avgPrice)} | 표본 ${pb.sampleCount}대`);
   } else if (pb.source === 'local') {
     console.log(`  출처: 로컬 DB 동일 모델·트림·연식 평균 (local) | 기준 평균 ${fmtManwon(pb.avgPrice)} | 표본 ${pb.sampleCount}대`);
   } else {
-    console.log(`  출처: 기준 없음 (none) — 로컬 동일 조건 표본 ${local?.sampleCount ?? 0}대 (최소 ${MIN_LOCAL_PRICE_SAMPLES}대 필요) → 가격 점수 중립(50%)`);
+    console.log(`  출처: 기준 없음 (none) — 로컬 동일 조건 표본 ${pb.localSampleCount}대 (최소 ${pb.minLocalSamples}대 필요) → 가격 점수 중립(50%)`);
   }
 
   if (pb.avgPrice != null && v.price > 0) {
@@ -84,7 +78,7 @@ export function detailCommand(carId: string): number {
   }
   console.log(`  ※ 현재 DB 기준으로 재구성한 값입니다 (collect 이후 DB가 바뀌었으면 저장된 가격 점수와 다를 수 있음)`);
 
-  const market = getMarketPriceByCarId(carId);
+  const market = d.marketPrice;
   if (market) {
     console.log(`  동급매물 시세: 중앙값 ${fmtManwon(market.median)} (P25 ${fmtNum(market.p25)} ~ P75 ${fmtNum(market.p75)}, 최저 ${fmtNum(market.minPrice)} ~ 최고 ${fmtNum(market.maxPrice)}만원, ${market.sampleCount}대, ${fmtKst(market.collectedAt)})`);
   } else {
@@ -104,7 +98,7 @@ export function detailCommand(carId: string): number {
   } else {
     console.log(`  보험처리 ${v.insuranceCount}건 | 내차피해 ${v.myDamageCount}건 ${fmtWon(v.myDamageAmount)} | 타차가해 ${v.otherDamageCount}건 ${fmtWon(v.otherDamageAmount)}`);
     console.log(`  정보제공 불가기간: ${v.unavailablePeriods.length ? v.unavailablePeriods.join(', ') : '없음'}`);
-    const accidents = getAccidentsByCarId(carId);
+    const accidents = d.accidents;
     if (accidents.length === 0) {
       console.log('  사고 상세: 없음');
     } else {
@@ -139,7 +133,7 @@ export function detailCommand(carId: string): number {
   console.log();
 
   console.log(`[소유주 변경] ${v.ownerChangeCount}회`);
-  const ownerDates = getOwnerChangesByCarId(carId);
+  const ownerDates = d.ownerChanges;
   if (ownerDates.length > 0) {
     console.log(`  ${ownerDates.map((d) => d.changeDate || '날짜 미상').join(', ')}`);
   }
@@ -147,7 +141,7 @@ export function detailCommand(carId: string): number {
 
   console.log('[용도 이력]');
   console.log(`  렌트이력: ${fmtBool(v.hasRentalHistory)} | 용도변경: ${fmtBool(v.hasUsageChange)}`);
-  const usage = getUsageHistoryByCarId(carId);
+  const usage = d.usageHistory;
   if (usage.length > 0) {
     console.log(`  ${usage.map((u) => `${u.usageCode}(${USAGE_LABEL[u.usageCode] ?? '기타'})`).join(' → ')}`);
   } else {
@@ -155,7 +149,7 @@ export function detailCommand(carId: string): number {
   }
   console.log();
 
-  const options = getOptionsByCarId(carId);
+  const options = d.options;
   console.log(`[선택옵션] ${options.length}개 (합계 ${fmtManwon(v.originPriceOptions)})`);
   if (options.length > 0) {
     console.log(`  ${options.map((o) => `${o.optionName ?? o.optionCode}(${fmtManwon(o.optionPrice)})`).join(', ')}`);

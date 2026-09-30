@@ -374,9 +374,13 @@ export function decideVerdict(
   };
 }
 
+/** 요청별 판정 설정. 생략한 값은 환경변수(COMPARE_SPEC_MAX_ADJUST / COMPARE_PREMIUM_HYUNDAI_CERTIFIED) 기준 */
+export interface AnalyzeOptions { specMaxAdjust?: number; basePremium?: number; }
+
 export function analyzeComparison(
   input: CompareInput, match: MarketMatch, now: Date = new Date(),
   peerOptionNames?: ReadonlyMap<string, readonly (string | null)[]>,
+  options: AnalyzeOptions = {},
 ): CompareResult {
   const peers = match.peers;
   if (peers.length === 0) throw new Error('동급매물이 없어 비교할 수 없습니다');
@@ -399,6 +403,10 @@ export function analyzeComparison(
     owner: compareOwner(input, peers),
     rental: compareRental(input, peers),
     option,
-    judgement: decideVerdict(price.diffPercent, factors, input, accident.severity, computeSpecAdjustment(option.specDiffPercent), platformBasePremium(input.platform)),
+    judgement: decideVerdict(
+      price.diffPercent, factors, input, accident.severity,
+      computeSpecAdjustment(option.specDiffPercent, options.specMaxAdjust ?? specMaxAdjust()),
+      options.basePremium ?? platformBasePremium(input.platform),
+    ),
   };
 }

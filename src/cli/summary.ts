@@ -29,7 +29,7 @@ export function summaryCommand(): number {
   }
   console.log(gradeLine);
   console.log(`  평균 점수: ${scoreAvg == null ? '-' : scoreAvg.toFixed(1) + '점'}`);
-  console.log(`  가격 범위: ${priceMin == null ? '-' : fmtNum(priceMin)} ~ ${fmtManwon(priceMax)} (평균 ${fmtManwon(priceAvg)})`);
+  console.log(`  가격 범위: ${priceMin == null ? '-' : fmtNum(priceMin)} ~ ${fmtManwon(priceMax)} (평균 ${fmtManwon(priceAvg)})${s.priceExcludedCount > 0 ? ` — 가격 미정 ${fmtNum(s.priceExcludedCount)}대 제외` : ''}`);
   console.log(`  모델 분포 (상위 ${s.modelDistribution.length}):`);
   for (const m of s.modelDistribution) {
     const label = m.label || '(모델 미상)';

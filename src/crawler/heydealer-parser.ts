@@ -1,4 +1,4 @@
-import { fetchText } from './fetch-helper';
+import { fetchText, InvalidUrlError } from './fetch-helper';
 import type { CompareInput, InspectionInfo, InputOptionItem, InputOptionPackage, OptionChoice, OptionAvailability } from '../types';
 
 type Obj = Record<string, unknown>;
@@ -272,10 +272,10 @@ export function parseHeydealerHtml(html: string, url: string): HeydealerParseRes
   return { input, warnings };
 }
 
-export async function fetchHeydealerInput(url: string): Promise<HeydealerParseResult> {
+export async function fetchHeydealerInput(url: string, fetchHtml: (url: string) => Promise<string> = fetchText): Promise<HeydealerParseResult> {
   if (!parseHeydealerId(url)) {
-    throw new Error(`헤이딜러 상세 URL 형식이 아닙니다 (https://www.heydealer.com/market/cars/{id}): ${url}`);
+    throw new InvalidUrlError(`헤이딜러 상세 URL 형식이 아닙니다 (https://www.heydealer.com/market/cars/{id}): ${url}`);
   }
-  const html = await fetchText(url);
+  const html = await fetchHtml(url);
   return parseHeydealerHtml(html, url);
 }

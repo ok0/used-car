@@ -15,6 +15,14 @@ export class HttpError extends Error {
   }
 }
 
+/** 사이트 상세 URL 형식 오류 (네트워크 요청 전에 판정) */
+export class InvalidUrlError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidUrlError';
+  }
+}
+
 export class BlockedError extends Error {
   constructor(public readonly url: string) {
     super(`엔카 API 차단됨 (has_been_cr_blocked) — 네트워크/IP 변경 필요: ${url}`);

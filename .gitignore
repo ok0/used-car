@@ -5,6 +5,7 @@ data/*.db-journal
 dist/
 node_modules/
 .env
+web/dist/
 
 PLAN.md
 PRD.md

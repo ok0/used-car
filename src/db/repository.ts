@@ -7,6 +7,8 @@ import {
 
 type SqlValue = string | number | null;
 
+/** 이 값 이상의 가격(만원)은 가격 미정 자리표시로 보고 가격 통계에서 제외 */
+export const INVALID_PRICE_MIN = 9999;
 export const DEFAULT_STALE_DAYS = 14;
 /** STALE_DAYS: 0 이상의 정수. 비우면 14, 0이면 미확인 제외·purge 끔 */
 export function getStaleDays(env: NodeJS.ProcessEnv = process.env): number {
@@ -204,10 +206,14 @@ export function getSummary(now: Date = new Date()): SummaryStats {
             COALESCE(SUM(CASE WHEN ${STALE_SQL} THEN 1 ELSE 0 END), 0) AS staleCount
      FROM vehicles`
   ).get(cutoff) as { totalCount: number; lastCollectedAt: string | null; lastSeenAt: string | null; staleCount: number };
+  // 가격 통계는 유효 가격(0 < 가격 < 9999만원)만 사용. 9,999 이상은 엔카의 가격 미정 자리표시값 (시세 기준과 동일)
+  const validPrice = `price > 0 AND price < ${INVALID_PRICE_MIN}`;
   const priceStats = db.prepare(
-    `SELECT MIN(price) AS priceMin, MAX(price) AS priceMax, AVG(price) AS priceAvg, AVG(score_total) AS scoreAvg
+    `SELECT MIN(CASE WHEN ${validPrice} THEN price END) AS priceMin, MAX(CASE WHEN ${validPrice} THEN price END) AS priceMax,
+            AVG(CASE WHEN ${validPrice} THEN price END) AS priceAvg, AVG(score_total) AS scoreAvg,
+            COALESCE(SUM(CASE WHEN ${validPrice} THEN 0 ELSE 1 END), 0) AS priceExcludedCount
      FROM vehicles ${activeWhere}`
-  ).get(...ap) as { priceMin: number | null; priceMax: number | null; priceAvg: number | null; scoreAvg: number | null };
+  ).get(...ap) as { priceMin: number | null; priceMax: number | null; priceAvg: number | null; scoreAvg: number | null; priceExcludedCount: number };
   const modelDistribution = db.prepare(
     `SELECT TRIM(COALESCE(model_name,'') || ' ' || COALESCE(grade_name,'')) AS label, COUNT(*) AS count
      FROM vehicles ${activeWhere} GROUP BY label ORDER BY count DESC, label ASC LIMIT 10`
@@ -228,6 +234,7 @@ export function getSummary(now: Date = new Date()): SummaryStats {
     priceMin: priceStats.priceMin,
     priceMax: priceStats.priceMax,
     priceAvg: priceStats.priceAvg,
+    priceExcludedCount: priceStats.priceExcludedCount,
     scoreAvg: priceStats.scoreAvg,
     activeCount: counts.totalCount - counts.staleCount,
     staleCount: counts.staleCount,

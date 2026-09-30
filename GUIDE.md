@@ -290,6 +290,13 @@ COMPARE_MILEAGE_RANGE=30 COMPARE_MIN_SAMPLES=1 npx ts-node src/index.ts compare 
 COMPARE_MILEAGE_RANGE=none COMPARE_YEAR_RANGE=1 npx ts-node src/index.ts compare --url "<헤이딜러 URL>"
 ```
 
+### GUI 서버
+
+| 변수 | 기본 | 설명 |
+|------|------|------|
+| `GUI_PORT` | `5174` | `npm run gui`가 띄우는 웹 서버 포트. 명령줄 옵션 `--port`로도 지정 가능. |
+| `USED_CAR_DB` | (없음) | 사용할 DB 파일 경로. 지정하면 해당 파일을 읽기 전용으로 사용합니다. 테스트·검증 용도. 지정 안 하면 `data/used-car.db` 사용 (읽기 전용). |
+
 - 지정한 범위 안의 표본이 `COMPARE_MIN_SAMPLES`보다 적으면 다음 단계로 넓히고, 모든 단계가 부족하면 주행거리 제한 없이 비교합니다. 정해 둔 범위를 **엄격하게** 적용하려면 `COMPARE_MIN_SAMPLES`를 낮추세요.
 - 출력 헤더의 `주행 ±60%`, `±2년`, `최소 N대` 표시는 실제로 적용된 값입니다.
 
@@ -366,12 +373,16 @@ npx ts-node src/scoring/rescore.ts
 
 ```
 used-car/
-├── README.md
+├── README.md, GUIDE.md
 ├── PRD.md, PLAN.md           # 요구사항 / 작업 계획
 ├── package.json, tsconfig.json
 ├── .env.example              # 환경변수 예시 (.env로 복사해서 사용, .env는 git 제외)
 ├── data/used-car.db          # SQLite DB (자동 생성, git 제외)
 ├── .reference/               # 참조용 Chrome Extension 원본 (스코어링 로직 출처)
+├── web/                      # React SPA (npm run gui로 빌드 후 서빙)
+│   ├── src/                  # React 컴포넌트, 페이지, 라이브러리
+│   ├── index.html, vite.config.mts, tsconfig.json
+│   └── dist/                 # 빌드 산출물 (git 제외)
 └── src/
     ├── index.ts              # CLI 엔트리포인트 (commander)
     ├── cli/                  # collect / summary / list / detail / compare / purge 핸들러, 출력 포맷
@@ -379,6 +390,8 @@ used-car/
     ├── scoring/              # 항목별 채점, 종합 계산기, 재채점
     ├── comparator/           # 동급매물 매칭, 항목별 분석, 리포트 출력
     ├── db/                   # SQLite 연결, 스키마, 저장소
+    ├── services/             # CLI와 서버가 공유하는 데이터 서비스 (비교, 매물 조회)
+    ├── server/               # Fastify 로컬 웹 서버, API 타입, 요청 처리
     └── types/                # 타입 정의
 ```
 

@@ -127,6 +127,7 @@ export interface SummaryStats {
   priceMin: number | null;
   priceMax: number | null;
   priceAvg: number | null;
+  priceExcludedCount: number; // 가격 통계에서 제외된 대수 (가격 미정 9,999만원 이상 등)
   scoreAvg: number | null;
   activeCount: number;
   staleCount: number;
@@ -314,4 +315,56 @@ export interface PriceBaselineKey {
   gradeDetail: string | null;
   powertrainCluster: string | null;
   year: number; // 2자리 연식 (vehicles.year와 동일 규약)
+}
+
+/** 비교 요청별 동급 조건·판정 설정 덮어쓰기 (생략 = 환경변수/기본값) */
+export interface CompareSettingsOverride {
+  yearRange?: number;                // 연식 ±N년 (0~10 정수)
+  mileagePercents?: number[] | null; // 주행거리 ±% 단계 (1~5개, 각 0 초과 500 이하). null = 제한 없음
+  minSamples?: number;               // 최소 표본 (1~100 정수)
+  specMaxAdjust?: number;            // 사양 보정 상한 % (0~30 정수, 0 = 끔)
+}
+
+/** 목록·동급 표 1행 (VehicleData 요약) */
+export interface VehicleListItem {
+  carId: string;
+  manufacturer: string | null;
+  modelName: string | null;
+  gradeName: string | null;
+  gradeDetail: string | null;
+  year: number;
+  month: number;
+  mileage: number;
+  price: number;
+  scoreGrade: Grade | null;
+  scoreTotal: number | null;
+  myDamageCount: number;
+  isInsurancePrivate: boolean;
+  ownerChangeCount: number;
+  hasRentalHistory: boolean;
+  lastSeenAt: string | null;
+  stale: boolean; // STALE_DAYS 이상 엔카 목록에서 미확인
+}
+
+/** 가격 점수 기준 (detail 명령과 동일하게 현재 DB로 재구성) */
+export interface PriceBaselineInfo {
+  source: 'yearly' | 'local' | 'none';
+  avgPrice: number | null;
+  sampleCount: number | null;
+  localSampleCount: number; // 로컬 동일 조건 표본 수 (기준 없음 안내용)
+  minLocalSamples: number;  // 로컬 기준 최소 표본 (MIN_LOCAL_PRICE_SAMPLES)
+}
+
+/** 매물 상세 (vehicles 1행 + 자식 데이터 + 파생값) */
+export interface VehicleDetail {
+  vehicle: VehicleData;
+  stale: boolean;
+  staleDays: number;
+  priceBaseline: PriceBaselineInfo;
+  marketPrice: MarketPrice | null;
+  yearlyPrices: YearlyPrice[];
+  accidents: AccidentRecord[];
+  ownerChanges: OwnerChange[];
+  usageHistory: UsageHistory[];
+  options: VehicleOption[];
 }
