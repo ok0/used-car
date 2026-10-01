@@ -1,6 +1,7 @@
 import { fmtNum, fmtManwon, fmtWon, fmtKm, fmtYY, fmtYearMonth } from '../cli/format';
-import type { AccidentSeverity, CompareInput, CompareResult, CompareVerdict, InspectionInfo, InputOptionItem, ModelMatchLevel } from '../types';
+import type { AccidentCompositionDiagnostics, AccidentCompositionTerm, AccidentSeverity, CompareInput, CompareResult, CompareVerdict, InspectionInfo, InputOptionItem, KnnAgreement, KnnConfidence, KnnResult, ModelMatchLevel } from '../types';
 import { SPEC_DEADBAND, specMaxAdjust } from './analyzer';
+import { KNN_TERM_LABEL } from './knn';
 
 const LINE = '━'.repeat(44);
 const PLATFORM_LABEL: Record<CompareInput['platform'], string> = { heydealer: '헤이딜러', kcar: '케이카', hyundai_certified: '현대 인증중고차' };
@@ -20,6 +21,18 @@ const SEVERITY_LABEL: Record<AccidentSeverity, string> = {
   none: '무사고', minor: '경미', moderate: '중간', severe: '심각', unknown: '금액 미상',
 };
 
+export const VERDICT_WORD: Record<CompareVerdict, string> = { cheap: '저렴함', fair: '적정가', slightly_expensive: '다소 비쌈', expensive: '비쌈' };
+export const KNN_CONFIDENCE_LABEL: Record<KnnConfidence, string> = { high: '높음', medium: '보통', low: '낮음' };
+export const KNN_BASE_SOURCE_LABEL: Record<NonNullable<KnnResult['basePriceSource']>, string> = {
+  input: '입력 신차가 − 선택옵션', trim_peers: '같은 트림 엔카 매물', origin_estimate: '입력 신차가로 추정',
+};
+export const KNN_AGREEMENT_LABEL: Record<KnnAgreement['level'], string> = { agree: '비슷함', minor: '약간 다름', major: '크게 다름' };
+const KNN_AGREEMENT_HINT: Record<KnnAgreement['level'], string> = {
+  agree: '두 평가가 비슷합니다.',
+  minor: '두 평가가 약간 다릅니다 — 동급 범위(연식·주행 구간)와 유사 매물 구성의 차이일 수 있습니다.',
+  major: '두 평가가 크게 다릅니다 — 사고·교환 이력, 드문 트림, 동급과 주행거리·옵션 차이가 클 때 흔합니다. 유사 매물 목록을 직접 확인하세요.',
+};
+
 export function fmtPct(r: number | null): string { return r === null ? '-' : `${Math.round(r * 100)}%`; }
 function fmtMatchedNames(pkgName: string, names: readonly string[]): string {
   if (names.length === 0 || (names.length === 1 && names[0] === pkgName)) return '';
@@ -29,6 +42,27 @@ function fmtMatchedNames(pkgName: string, names: readonly string[]): string {
 export function signed(n: number, digits = 1): string { return `${n > 0 ? '+' : ''}${n.toFixed(digits)}`; }
 export function signedInt(n: number): string { return `${n > 0 ? '+' : n < 0 ? '-' : ''}${fmtNum(Math.abs(n))}`; }
 function yn(b: boolean | null): string { return b === null ? '?' : b ? '있음' : '없음'; }
+
+/** 사고 구성 보정 항 설명: "보험금 54만원 vs 동급 평균 64만원 +0.1%" / 입력 없음 → "보험금 정보 미제공(보정 없음)" */
+function accidentTermText(label: string, t: AccidentCompositionTerm, kind: 'amount' | 'flag'): string {
+  if (t.input === null) return `${label} 정보 미제공(보정 없음)`;
+  if (t.peerMean === null) return `${label} 동급 정보 없음(보정 없음)`;
+  const inp = kind === 'amount' ? (t.input === 0 ? '없음' : fmtManwon(Math.round(t.input * 100))) : t.input === 1 ? '있음' : '없음';
+  const peer = kind === 'amount' ? `평균 ${fmtManwon(Math.round(t.peerMean * 100))}` : fmtPct(t.peerMean);
+  return `${label} ${inp} vs 동급 ${peer} ${signed(t.percent)}%`;
+}
+
+/** "동급 6대 중 사고 3대 (교환·판금 1대)" — 보험이력·점검 비공개 동급은 괄호로 안내 */
+export function peerAccidentSummary(ac: AccidentCompositionDiagnostics, sampleCount: number): string {
+  const hidden: string[] = [];
+  if (ac.peerInsuranceKnownCount < sampleCount) hidden.push(`보험이력 비공개 ${sampleCount - ac.peerInsuranceKnownCount}대`);
+  if (ac.peerInspectableCount < sampleCount) hidden.push(`점검 비공개 ${sampleCount - ac.peerInspectableCount}대`);
+  return `동급 ${sampleCount}대 중 사고 ${ac.peerAccidentCount}대 (교환·판금 ${ac.peerRepairCount}대${hidden.length > 0 ? `, ${hidden.join(', ')}` : ''})`;
+}
+
+export function accidentCompositionText(ac: AccidentCompositionDiagnostics): string {
+  return [accidentTermText('보험금', ac.amount, 'amount'), accidentTermText('교환', ac.replacement, 'flag'), accidentTermText('판금', ac.welding, 'flag')].join(' · ');
+}
 
 export function inputTitle(i: CompareInput): string {
   const head = i.manufacturer && !i.model.startsWith(i.manufacturer) ? `${i.manufacturer} ${i.model}` : i.model;
@@ -53,7 +87,9 @@ export function buildVerdictLines(r: CompareResult): string[] {
   if (j.factors.length > 0) {
     lines.push(`품질 보정: ${j.factors.map((f) => `${f.reason} ${f.points > 0 ? '+' : ''}${f.points}%p`).join(', ')}`);
   }
-  lines.push(`상품화 플랫폼 프리미엄 허용치: ${j.allowedPremium}% (기본 ${j.basePremium}% ${j.qualityAdjustment >= 0 ? '+' : ''}${j.qualityAdjustment}%p, 범위 0~10%)`);
+  lines.push(j.qualityAdjustment === 0
+    ? `상품화 플랫폼 프리미엄 허용치: ${j.allowedPremium}% (플랫폼 기본값 — 사고·교환·판금은 허용치가 아니라 구성 보정에 반영)`
+    : `상품화 플랫폼 프리미엄 허용치: ${j.allowedPremium}% (기본 ${j.basePremium}% ${j.qualityAdjustment >= 0 ? '+' : ''}${j.qualityAdjustment}%p, 범위 0~10%)`);
   if (j.verdict === 'cheap') {
     lines.push(`기대 가격(엔카 시세 + 허용 프리미엄 ${j.allowedPremium}%)보다 ${Math.abs(j.excessOverAllowance).toFixed(1)}% 낮으며 치명적 감점 요인이 없습니다.`);
   } else if (j.verdict === 'fair' && j.criticalReasons.length > 0 && j.excessOverAllowance <= -5) {
@@ -70,16 +106,16 @@ export function buildVerdictLines(r: CompareResult): string[] {
     lines.push(`참고(측정 편차): 동급 ${r.sampleCount}대 가격 표준편차 ±${g.peerLogSdPercent.toFixed(1)}%, 동급 평균의 표준오차 ±${g.meanStdErrPercent.toFixed(1)}%`);
   }
   if (j.compositionAdjustment !== 0) {
-    lines.push(`연식·주행·렌트 구성 보정 ${signed(-j.compositionAdjustment)}% → 보정 후 가격 차이 ${signed(d)}%`);
+    lines.push(`연식·주행·렌트·사고 구성 보정 ${signed(-j.compositionAdjustment)}% → 보정 후 가격 차이 ${signed(d)}%`);
   }
-  lines.push(`참고(구성 차이): 동급 대비 차령 ${signed(g.ageGapMonths, 0)}개월 · 주행 ${signedInt(Math.round(g.mileageGapKm))}km · 동급 렌트 비율 ${fmtPct(g.peerRentalRatio)} → 이 차이만으로 예상되는 가격 차이 ${signed(g.compositionPercent)}% (판정에 반영)`);
+  lines.push(`참고(구성 차이): 동급 대비 차령 ${signed(g.ageGapMonths, 0)}개월 · 주행 ${signedInt(Math.round(g.mileageGapKm))}km · 동급 렌트 비율 ${fmtPct(g.peerRentalRatio)} · 동급 사고 ${g.accident.peerAccidentCount}대 → 이 차이만으로 예상되는 가격 차이 ${signed(g.compositionPercent)}% = 차령 ${signed(g.ageTermPercent)} · 주행 ${signed(g.mileageTermPercent)} · 렌트 ${signed(g.rentalTermPercent)} · 사고 ${signed(g.accident.percent)} (판정에 반영)`);
   return lines;
 }
 
 export function buildRecommendations(r: CompareResult): string[] {
   const recs: string[] = [];
   const i = r.input;
-  if (Math.abs(r.diagnostics.compositionPercent) >= 3) recs.push(`동급과 연식·주행거리·렌트 구성 차이로 약 ${signed(r.diagnostics.compositionPercent)}%의 가격 차이가 예상됩니다 — 동급 평균 대비 %를 해석할 때 고려 권장`);
+  if (Math.abs(r.diagnostics.compositionPercent) >= 3) recs.push(`동급과 연식·주행거리·렌트·사고 구성 차이로 약 ${signed(r.diagnostics.compositionPercent)}%의 가격 차이가 예상됩니다 — 동급 평균 대비 %를 해석할 때 고려 권장`);
   if (r.option.specDiffPercent === null) recs.push('옵션 포함 신차가 비교 불가 — 옵션·트림 구성을 직접 비교 권장');
   if (r.isLowSample) recs.push(`동급 표본이 ${r.sampleCount}대로 적습니다 — 같은 모델의 엔카 검색 URL로 collect를 더 실행한 뒤 재비교 권장`);
   if (r.criteria.modelMatchLevel === 'loose' || (r.criteria.trim !== null && !r.criteria.trimApplied)) {
@@ -98,6 +134,35 @@ export function buildRecommendations(r: CompareResult): string[] {
   }
   if (recs.length === 0) recs.push('특이사항 없음 — 실차 확인 후 구매 판단');
   return recs;
+}
+
+/** 유사 매물 평가 요약 (CLI ⑧ 섹션 첫 줄들 = GUI 요약 카드). 꺼져 있으면 [] */
+export function buildKnnLines(r: CompareResult): string[] {
+  const k = r.knn;
+  if (k === null) return [];
+  const a = k.agreement;
+  return [
+    `기대 가격 ${fmtManwon(k.expectedPrice)} (95% 구간 ${fmtNum(k.intervalLow)}~${fmtManwon(k.intervalHigh)}) → 이 매물 ${signed(k.diffPercent)}%`,
+    `판정(참고): ${VERDICT_WORD[k.verdict]} — 기본 프리미엄 ${k.basePremium}%를 뺀 차이 ${signed(k.excessOverAllowance)}%p (사고·교환·렌트·옵션은 기대 가격에 반영)`,
+    `현재 평가 ${signed(a.currentPercent)}% vs 유사 매물 평가 ${signed(a.knnPercent)}% → 차이 ${signed(a.gap)}%p (${KNN_AGREEMENT_LABEL[a.level]}, 판정 ${a.sameVerdict ? '같음' : '다름'})`,
+    KNN_AGREEMENT_HINT[a.level],
+  ];
+}
+
+function printKnnSection(k: KnnResult, r: CompareResult, log: (line: string) => void): void {
+  log('⑧ 유사 매물 평가 (가중 최근접 이웃, 참고)');
+  for (const line of buildKnnLines(r)) log(`  ${line}`);
+  log(`  이웃: 같은 모델 ${k.candidateCount}대 중 가까운 ${k.k}대 (유효 ${k.effectiveCount.toFixed(1)}대, 거리 10%p 이내 ${k.closeCount}대) · 평균 거리 ${k.meanDistance.toFixed(1)}%p · 신뢰도 ${KNN_CONFIDENCE_LABEL[k.confidence]}`);
+  const base = k.inputBasePrice === null || k.basePriceSource === null ? '확인 불가' : `${fmtManwon(k.inputBasePrice)} (${KNN_BASE_SOURCE_LABEL[k.basePriceSource]})`;
+  log(`  기본 신차가: ${base}${k.inputOptionPercent !== null ? ` · 선택옵션 비중 ${k.inputOptionPercent.toFixed(1)}%` : ''}`);
+  log(`  가장 비슷한 매물 ${Math.min(5, k.neighbors.length)}대 (거리 = 가격 영향 차이의 합, → 이 매물 조건으로 환산한 가격):`);
+  k.neighbors.slice(0, 5).forEach((n, idx) => {
+    const trim = [n.gradeName, n.gradeDetail].filter((x): x is string => !!x).join(' ');
+    const why = n.contributions.slice(0, 3).map((c) => `${KNN_TERM_LABEL[c.key]} ${c.percent.toFixed(1)}`).join(', ');
+    log(`    ${idx + 1}) ${fmtYearMonth(n.year, n.month)} ${trim} · ${fmtKm(n.mileage)} · ${fmtManwon(n.price)} → ${fmtManwon(n.adjustedPrice)} | 거리 ${n.distance.toFixed(1)}%p${why ? ` (${why})` : ''}`);
+  });
+  for (const w of k.warnings) log(`  ⚠️ ${w}`);
+  log('');
 }
 
 function inspectionInputText(x: InspectionInfo | null): string {
@@ -175,6 +240,8 @@ export function printCompareReport(r: CompareResult, log: (line: string) => void
     log(`${base}${ratioText} (${SEVERITY_LABEL[a.severity]})`);
   }
   log(`  동급 무사고 비율: ${fmtPct(a.peerAccidentFreeRatio)} (${a.peerKnownCount}대 중 ${a.peerAccidentFreeCount}대) | 동급 평균 사고: ${a.peerAvgAccidentCount === null ? '-' : a.peerAvgAccidentCount.toFixed(1) + '건'}`);
+  const ac = r.diagnostics.accident;
+  log(`  ${peerAccidentSummary(ac, r.sampleCount)} → 사고 구성 보정 ${signed(ac.percent)}% (${accidentCompositionText(ac)})`);
   if (a.severity === 'none') log('  → 무사고 매물은 동급에서 프리미엄 요인');
   else if (a.severity === 'minor') log('  → 경미한 사고 (신차가 대비 8% 이하)');
   else if (a.severity === 'moderate') log('  → 중간 규모 사고 — 수리 내역 확인 권장');
@@ -185,6 +252,9 @@ export function printCompareReport(r: CompareResult, log: (line: string) => void
   log('④ 성능점검');
   const ins = r.inspection;
   log(`  입력: ${inspectionInputText(ins.input)}`);
+  if (i.platform === 'heydealer' && i.sourceUrl !== null && ins.input !== null && ins.input.isClean === true) {
+    log(`  참고: 헤이딜러 "${ins.input.label}"는 성능점검(교환·판금·부식) 기준이며, 보험 처리 이력은 ③에서 따로 확인합니다`);
+  }
   log(`  동급 무사고(교환·판금·부식 없음) 비율: ${fmtPct(ins.peerCleanRatio)} (${ins.peerInspectableCount}대 중 ${ins.peerCleanCount}대) | 엔카진단 비율: ${fmtPct(ins.peerDiagnosisRatio)}`);
   if (ins.input !== null && ins.input.isClean !== true && ins.peerSameStateRatio !== null) {
     log(`  동급 중 동일 상태 비율: ${fmtPct(ins.peerSameStateRatio)}`);
@@ -261,10 +331,14 @@ export function printCompareReport(r: CompareResult, log: (line: string) => void
   }
   log('');
 
+  if (r.knn !== null) printKnnSection(r.knn, r, log);
+
   log(LINE);
   log('');
 
-  log(VERDICT_LABEL[r.judgement.verdict]);
+  const knnPrimary = r.knn !== null && r.knn.primary;
+  log(VERDICT_LABEL[knnPrimary ? (r.knn as KnnResult).verdict : r.judgement.verdict]);
+  if (knnPrimary) log(`  (종합 판정 기준: 유사 매물 평가 — COMPARE_VERDICT_SOURCE=knn. 현재 평가 판정: ${VERDICT_WORD[r.judgement.verdict]})`);
   log('');
   for (const line of buildVerdictLines(r)) log(`  ${line}`);
   log('');

@@ -6,7 +6,9 @@ export interface HistogramInput {
   inputPrice: number;
   mean: number; median: number; p25: number; p75: number;
   width: number; height: number;
+  knn?: { expected: number; low: number; high: number; neighborPrices: number[] } | null; // 유사 매물 평가 (선택)
 }
+export interface HistKnn { x: number; x1: number; x2: number; rug: number[] } // 기대 가격·95% 구간(축 안으로 자름)·이웃 환산가 눈금 x
 export interface HistBar { x: number; y: number; w: number; h: number; from: number; to: number; count: number; isInput: boolean }
 export interface HistMarker { kind: 'input' | 'mean' | 'median'; value: number; x: number }
 export interface HistogramLayout {
@@ -18,6 +20,7 @@ export interface HistogramLayout {
   iqr: { x1: number; x2: number };
   xTicks: { x: number; value: number }[];
   yTicks: { y: number; value: number }[];
+  knn: HistKnn | null;
 }
 export const HIST_PAD = { left: 36, right: 16, top: 60, bottom: 28 } as const;
 
@@ -26,8 +29,9 @@ export function histogramLayout(i: HistogramInput): HistogramLayout {
   const first = i.buckets[0];
   const last = i.buckets[i.buckets.length - 1];
   const half = i.bucketWidth / 2;
-  const d0 = Math.min(first.from, i.inputPrice - half);
-  const d1 = Math.max(last.to, i.inputPrice + half);
+  const k = i.knn ?? null;
+  const d0 = Math.min(first.from, i.inputPrice - half, ...(k ? [k.expected - half] : []));
+  const d1 = Math.max(last.to, i.inputPrice + half, ...(k ? [k.expected + half] : []));
   const plot = { left: HIST_PAD.left, top: HIST_PAD.top, right: i.width - HIST_PAD.right, bottom: i.height - HIST_PAD.bottom };
   const x = (v: number): number => plot.left + ((v - d0) / (d1 - d0)) * (plot.right - plot.left);
   const yMax = Math.max(1, ...i.buckets.map((b) => b.count));
@@ -54,6 +58,11 @@ export function histogramLayout(i: HistogramInput): HistogramLayout {
     ],
     iqr: { x1: x(i.p25), x2: x(i.p75) },
     xTicks, yTicks,
+    knn: k === null ? null : {
+      x: x(k.expected),
+      x1: x(Math.max(d0, k.low)), x2: x(Math.min(d1, k.high)),
+      rug: k.neighborPrices.filter((p) => p >= d0 && p <= d1).map(x),
+    },
   };
 }
 

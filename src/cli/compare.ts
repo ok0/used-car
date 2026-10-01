@@ -24,6 +24,10 @@ export async function compareCommand(opts: CompareCliOptions, now: Date = new Da
     const mil = matchConfig.mileageRatios === null ? '제한 없음' : matchConfig.mileageRatios.map((r) => `±${Math.round(r * 100)}%`).join(' → ');
     console.log(`ℹ 동급 조건(환경변수): 연식 ±${matchConfig.yearRange}년 | 주행거리 ${mil} | 최소 표본 ${matchConfig.minSamples}대`);
   }
+  if (['COMPARE_KNN', 'COMPARE_KNN_N', 'COMPARE_VERDICT_SOURCE'].some((k) => (process.env[k] ?? '').trim() !== '')) {
+    const k = settings.knn;
+    console.log(`ℹ 유사 매물 평가(환경변수): ${k.enabled ? `이웃 ${k.n}대 | 종합 판정 기준 ${k.primary ? '유사 매물 평가' : '현재 평가'}` : '꺼짐'}`);
+  }
   if ((process.env.STALE_DAYS ?? '').trim() !== '') {
     const d = getStaleDays();
     console.log(`ℹ 미확인 매물 제외(STALE_DAYS): ${d === 0 ? '꺼짐' : `엔카 목록에서 ${d}일 이상 확인되지 않은 매물 제외`}`);

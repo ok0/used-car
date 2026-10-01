@@ -6,12 +6,14 @@ import { parseEnv } from 'node:util';
 import { DEFAULT_ENV_PATH, isShellEnvKey } from '../env';
 import { getMatchConfigFromEnv } from '../comparator/market-matcher';
 import { specMaxAdjust, platformBasePremium } from '../comparator/analyzer';
+import { getKnnConfigFromEnv } from '../comparator/knn';
 import { getStaleDays } from '../db/repository';
 
 export type EnvKey =
   | 'ENCAR_FETCH_MARKET' | 'ENCAR_FETCH_YEARLY'
   | 'COMPARE_MILEAGE_RANGE' | 'COMPARE_YEAR_RANGE' | 'COMPARE_MIN_SAMPLES' | 'COMPARE_SPEC_MAX_ADJUST'
   | 'COMPARE_PREMIUM_HEYDEALER' | 'COMPARE_PREMIUM_KCAR' | 'COMPARE_PREMIUM_HYUNDAI_CERTIFIED'
+  | 'COMPARE_KNN' | 'COMPARE_KNN_N' | 'COMPARE_VERDICT_SOURCE'
   | 'STALE_DAYS' | 'GUI_PORT';
 
 export interface EnvKeySpec {
@@ -40,6 +42,9 @@ export const ENV_KEYS: readonly EnvKeySpec[] = [
   { key: 'COMPARE_PREMIUM_HEYDEALER', kind: 'text', defaultText: '5', restartRequired: false, validate: (v) => { platformBasePremium('heydealer', { COMPARE_PREMIUM_HEYDEALER: v }); } },
   { key: 'COMPARE_PREMIUM_KCAR', kind: 'text', defaultText: '5', restartRequired: false, validate: (v) => { platformBasePremium('kcar', { COMPARE_PREMIUM_KCAR: v }); } },
   { key: 'COMPARE_PREMIUM_HYUNDAI_CERTIFIED', kind: 'text', defaultText: '5', restartRequired: false, validate: (v) => { platformBasePremium('hyundai_certified', { COMPARE_PREMIUM_HYUNDAI_CERTIFIED: v }); } },
+  { key: 'COMPARE_KNN', kind: 'text', defaultText: '1 (켜짐)', restartRequired: false, validate: (v) => { getKnnConfigFromEnv({ COMPARE_KNN: v }); } },
+  { key: 'COMPARE_KNN_N', kind: 'text', defaultText: '40', restartRequired: false, validate: (v) => { getKnnConfigFromEnv({ COMPARE_KNN_N: v }); } },
+  { key: 'COMPARE_VERDICT_SOURCE', kind: 'text', defaultText: 'current', restartRequired: false, validate: (v) => { getKnnConfigFromEnv({ COMPARE_VERDICT_SOURCE: v }); } },
   { key: 'STALE_DAYS', kind: 'text', defaultText: '14', restartRequired: false, validate: (v) => { getStaleDays({ STALE_DAYS: v }); } },
   { key: 'GUI_PORT', kind: 'text', defaultText: '5174', restartRequired: true, validate: validatePort },
 ];

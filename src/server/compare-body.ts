@@ -68,6 +68,7 @@ export function parseCompareBody(body: unknown): { opts: CompareCliOptions; over
     const yr = optNumber(so, 'yearRange', '연식 범위'); if (yr !== undefined) override.yearRange = yr;
     const ms = optNumber(so, 'minSamples', '최소 표본'); if (ms !== undefined) override.minSamples = ms;
     const sp = optNumber(so, 'specMaxAdjust', '사양 보정 상한'); if (sp !== undefined) override.specMaxAdjust = sp;
+    const kn = optNumber(so, 'knnN', '유사 매물 수'); if (kn !== undefined) override.knnN = kn;
     if (so.mileagePercents === null) override.mileagePercents = null;
     else if (so.mileagePercents !== undefined) {
       if (!Array.isArray(so.mileagePercents) || so.mileagePercents.some((x) => typeof x !== 'number')) throw new BodyError('주행거리 범위는 숫자 배열이어야 합니다');

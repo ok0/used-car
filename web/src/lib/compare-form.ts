@@ -9,23 +9,24 @@ export interface CompareFormState {
   model: string; trim: string; year: string; month: string; mileage: string; price: string;
   accidentCount: string; accidentAmount: string; ownerChanges: string; rental: '' | 'yes' | 'no'; inspection: string;
   useCustomSettings: boolean;
-  yearRange: string; mileagePercents: string; minSamples: string; specMaxAdjust: string;
+  yearRange: string; mileagePercents: string; minSamples: string; specMaxAdjust: string; knnN: string;
 }
 
 export const EMPTY_FORM: CompareFormState = {
   mode: 'url', url: '', platform: '', model: '', trim: '', year: '', month: '', mileage: '', price: '',
   accidentCount: '', accidentAmount: '', ownerChanges: '', rental: '', inspection: '',
-  useCustomSettings: false, yearRange: '', mileagePercents: '', minSamples: '', specMaxAdjust: '',
+  useCustomSettings: false, yearRange: '', mileagePercents: '', minSamples: '', specMaxAdjust: '', knnN: '',
 };
 
 export const FORM_STORAGE_KEY = 'used-car:compare-form:v1';
 
-export function settingsToForm(s: CompareSettingsInfo): Pick<CompareFormState, 'yearRange' | 'mileagePercents' | 'minSamples' | 'specMaxAdjust'> {
+export function settingsToForm(s: CompareSettingsInfo): Pick<CompareFormState, 'yearRange' | 'mileagePercents' | 'minSamples' | 'specMaxAdjust'> & Partial<Pick<CompareFormState, 'knnN'>> {
   return {
     yearRange: String(s.yearRange),
     mileagePercents: s.mileagePercents === null ? '없음' : s.mileagePercents.join(','),
     minSamples: String(s.minSamples),
     specMaxAdjust: String(s.specMaxAdjust),
+    ...(Number.isInteger(s.knnN) ? { knnN: String(s.knnN) } : {}), // 필드 없는 응답이면 키 생략 (기존 4필드 결과 불변)
   };
 }
 
@@ -71,6 +72,7 @@ export function formToRequest(f: CompareFormState): { body: CompareRequestBody |
     const yr = num('연식 범위', f.yearRange, errors); if (yr !== undefined) s.yearRange = yr;
     const ms = num('최소 표본', f.minSamples, errors); if (ms !== undefined) s.minSamples = ms;
     const sp = num('사양 보정 상한', f.specMaxAdjust, errors); if (sp !== undefined) s.specMaxAdjust = sp;
+    const kn = num('유사 매물 수', f.knnN, errors); if (kn !== undefined) s.knnN = kn;
     const mp = f.mileagePercents.trim();
     if (/^(없음|제한\s*없음|none|off)$/i.test(mp)) s.mileagePercents = null;
     else if (mp !== '') {

@@ -92,6 +92,8 @@ td.indent { padding-left: var(--space-5); color: var(--text-muted); }
 /* ───── 배지·칩·등급 ───── */
 .badge, .chip { display: inline-flex; align-items: center; gap: 2px; border-radius: 999px; padding: 0 8px; font-size: 12px; line-height: 20px; white-space: nowrap; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); }
 .chips { display: flex; flex-wrap: wrap; gap: var(--space-1); }
+td.chips { display: table-cell; }
+td.chips .chip { margin: 0 var(--space-1) 0 0; }
 .tone-good { color: var(--good); background: var(--good-bg); border-color: transparent; }
 .tone-neutral { color: var(--neutral); background: var(--neutral-bg); border-color: transparent; }
 .tone-warn { color: var(--warn); background: var(--warn-bg); border-color: transparent; }
@@ -169,6 +171,11 @@ td.indent { padding-left: var(--space-5); color: var(--text-muted); }
 .m-median line { stroke: var(--text); }
 .m-median text { fill: var(--text); }
 .hist figcaption { font-size: 12px; margin-top: var(--space-1); }
+.hist-knn-band { fill: var(--good-bg); stroke: var(--good); stroke-width: 1; }
+.hist-rug { stroke: var(--good); stroke-width: 1.5; }
+.hist-knn-mark { stroke: var(--good); stroke-width: 2; stroke-dasharray: 6 4; }
+.knn-reasons { color: var(--text-muted); font-size: 12px; }
+.eval-card .eval-big { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
 
 /* ───── 폼 ───── */
 .filters { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: flex-end; }
@@ -235,3 +242,7 @@ td.indent { padding-left: var(--space-5); color: var(--text-muted); }
 .setting-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-1); }
 @media (max-width: 700px) { .setting-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); } }
 .field-hint.is-error { color: var(--bad); }
+
+.filters-ranges { align-items: flex-end; }
+.range { display: flex; align-items: center; gap: 6px; }
+.range .input { min-width: 0; width: 120px; }

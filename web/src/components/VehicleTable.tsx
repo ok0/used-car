@@ -1,13 +1,25 @@
 import { Fragment } from 'react';
 import type { VehicleListItem } from '../../../src/types';
 import { Link, navigate } from '../router';
-import { fmtKm, fmtPoints, fmtPrice, fmtYearMonth, modelTrimLabel, fmtNum } from '../lib/format';
+import { fmtKm, fmtPoints, fmtPrice, fmtYearMonth, modelTrimLabel } from '../lib/format';
 import { Chip, GradeBadge } from './Badge';
 
 export interface VehicleTableProps {
   items: VehicleListItem[];
   startIndex?: number;                              // # 열 시작 번호 (기본 1)
-  marker?: { price: number; label: string } | null; // 비교 화면: 가격 순서상 위치에 "이 매물" 행 삽입
+  marker?: VehicleTableMarker | null;              // 비교 화면: 가격 순서상 위치에 "이 매물" 행 삽입
+  highlightAccident?: boolean;                      // 비교 화면: 내차피해 1건 이상인 매물의 사고 칸 강조
+}
+
+export interface VehicleTableMarker {
+  label: string;
+  price: number;
+  year: number;
+  month: number | null;
+  mileage: number;
+  accident: string;            // 사고 열 표시 문구 (모르면 '-')
+  ownerChangeCount: number | null;
+  hasRentalHistory: boolean | null;
 }
 
 function accidentText(v: VehicleListItem): string {
@@ -15,14 +27,20 @@ function accidentText(v: VehicleListItem): string {
   return v.myDamageCount === 0 ? '무사고' : `${v.myDamageCount}건`;
 }
 
-export function VehicleTable({ items, startIndex = 1, marker = null }: VehicleTableProps) {
+export function VehicleTable({ items, startIndex = 1, marker = null, highlightAccident = false }: VehicleTableProps) {
   const markerAt = marker === null ? -1 : (() => { const i = items.findIndex((v) => v.price > marker.price); return i === -1 ? items.length : i; })();
   const markerRow = marker === null ? null : (
     <tr className="row-marker">
       <td className="num">▶</td>
-      <td colSpan={3}>{marker.label}</td>
-      <td className="num">{fmtNum(marker.price)}만원</td>
-      <td colSpan={5} />
+      <td>{marker.label}</td>
+      <td className="num-plain">{fmtYearMonth(marker.year, marker.month)}</td>
+      <td className="num">{fmtKm(marker.mileage)}</td>
+      <td className="num">{fmtPrice(marker.price)}</td>
+      <td className="muted">-</td>
+      <td className="num muted">-</td>
+      <td>{marker.accident}</td>
+      <td className="num">{marker.ownerChangeCount === null ? '-' : `${marker.ownerChangeCount}회`}</td>
+      <td>{marker.hasRentalHistory ? <Chip tone="bad">렌트</Chip> : <span className="muted">-</span>}</td>
     </tr>
   );
   return (
@@ -46,11 +64,13 @@ export function VehicleTable({ items, startIndex = 1, marker = null }: VehicleTa
                 <td className="num">{fmtPrice(v.price)}</td>
                 <td><GradeBadge grade={v.scoreGrade} /></td>
                 <td className="num">{v.scoreTotal === null ? '-' : fmtPoints(v.scoreTotal)}</td>
-                <td>{accidentText(v)}</td>
+                <td>{highlightAccident && !v.isInsurancePrivate && v.myDamageCount > 0 ? <Chip tone="warn">{accidentText(v)}</Chip> : accidentText(v)}</td>
                 <td className="num">{v.ownerChangeCount}회</td>
                 <td className="chips">
-                  {v.stale && <Chip tone="warn">미확인</Chip>}
-                  {v.hasRentalHistory && <Chip tone="bad">렌트</Chip>}
+                  {v.stale || v.hasRentalHistory ? <>
+                    {v.stale && <Chip tone="warn">미확인</Chip>}
+                    {v.hasRentalHistory && <Chip tone="bad">렌트</Chip>}
+                  </> : <span className="muted">-</span>}
                 </td>
               </tr>
             </Fragment>

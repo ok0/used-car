@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import type { CompareResponse } from '../../../../src/server/api-types';
-import type { InspectionInfo } from '../../../../src/types';
+import type { AccidentCompositionTerm, InspectionInfo } from '../../../../src/types';
 import { accidentTone, inspectionTone, mileageTone, optionTone, ownerTone, priceTone, rentalTone } from '../../lib/compare-view';
 import { SEVERITY_LABEL, percentileLabel, type Tone } from '../../lib/labels';
 import { fmtKm, fmtManwon, fmtNum, fmtPct, fmtSigned, fmtSignedInt, fmtWon, fmtYY, fmtYn } from '../../lib/format';
@@ -19,6 +19,15 @@ function AxisCard({ no, title, tone, rows, conclusion }: { no: string; title: st
 
 function ratioRow(ratio: number | null, known: number, count: number): ReactNode {
   return ratio === null ? '-' : <HBar value={ratio} max={1} tone="muted" text={`${fmtPct(ratio)} (${known}대 중 ${count}대)`} />;
+}
+
+/** 사고 구성 보정 항 (reporter.accidentCompositionText와 같은 문구) */
+function accTermText(label: string, t: AccidentCompositionTerm, kind: 'amount' | 'flag'): string {
+  if (t.input === null) return `${label} 정보 미제공(보정 없음)`;
+  if (t.peerMean === null) return `${label} 동급 정보 없음(보정 없음)`;
+  const inp = kind === 'amount' ? (t.input === 0 ? '없음' : fmtManwon(Math.round(t.input * 100))) : t.input === 1 ? '있음' : '없음';
+  const peer = kind === 'amount' ? `평균 ${fmtManwon(Math.round(t.peerMean * 100))}` : fmtPct(t.peerMean);
+  return `${label} ${inp} vs 동급 ${peer} ${fmtSigned(t.percent)}%`;
 }
 
 function inspectionText(x: InspectionInfo | null): string {
@@ -46,6 +55,7 @@ export function AxisCards({ r }: { r: CompareResponse }) {
     : a.severity === 'moderate' ? '중간 규모 사고 — 수리 내역 확인 권장' : a.severity === 'severe' ? '대형 사고 — 가격 할인 폭 확인 필요' : '보험이력 확인 권장';
   const insConc = ins.input === null ? '성능점검 확인 권장' : ins.input.isClean === true ? '무사고 점검 (양호)'
     : ins.input.hasWelding === true ? '판금 이력 — 부위 확인 권장' : ins.input.hasReplacement === true ? '교환 이력 — 부위(외판/골격) 확인 권장' : '점검 상세 확인 권장';
+  const ac = x.diagnostics.accident;
   const ownRel = o.inputCount === null || o.peerAvgCount === null ? '' : o.inputCount <= o.peerAvgCount - 0.5 ? ' → 평균보다 적음 (양호)' : o.inputCount >= o.peerAvgCount + 0.5 ? ' → 평균보다 많음' : ' → 평균 수준';
   return (
     <div className="grid-2">
@@ -65,9 +75,13 @@ export function AxisCards({ r }: { r: CompareResponse }) {
         ['이 매물', accInput],
         ['동급 무사고 비율', ratioRow(a.peerAccidentFreeRatio, a.peerKnownCount, a.peerAccidentFreeCount)],
         ['동급 평균 사고', a.peerAvgAccidentCount === null ? '-' : `${a.peerAvgAccidentCount.toFixed(1)}건`],
+        ['동급 사고', `${ac.peerAccidentCount}/${ac.peerInsuranceKnownCount}대 (교환·판금 ${ac.peerRepairCount}/${ac.peerInspectableCount}대)`],
+        ['사고 구성 보정', `${fmtSigned(ac.percent)}% — ${accTermText('보험금', ac.amount, 'amount')} · ${accTermText('교환', ac.replacement, 'flag')} · ${accTermText('판금', ac.welding, 'flag')}`],
       ]} conclusion={accConc} />
       <AxisCard no="④" title="성능점검" tone={inspectionTone(ins)} rows={[
         ['이 매물', inspectionText(ins.input)],
+        ...(i.platform === 'heydealer' && i.sourceUrl !== null && ins.input !== null && ins.input.isClean === true
+          ? [['참고', `헤이딜러 "${ins.input.label}"는 성능점검(교환·판금·부식) 기준이며, 보험 처리 이력은 ③에서 따로 확인합니다`] as [string, ReactNode]] : []),
         ['동급 무사고 비율', ratioRow(ins.peerCleanRatio, ins.peerInspectableCount, ins.peerCleanCount)],
         ['엔카진단 비율', fmtPct(ins.peerDiagnosisRatio)],
         ...(ins.input !== null && ins.input.isClean !== true && ins.peerSameStateRatio !== null ? [['동급 중 동일 상태', fmtPct(ins.peerSameStateRatio)] as [string, ReactNode]] : []),

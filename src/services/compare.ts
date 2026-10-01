@@ -1,8 +1,9 @@
-import { getOptionNamesByCarIds, getSummary, getStaleDays, staleCutoffIso, countStaleVehicles } from '../db/repository';
+import { findVehicles, getOptionNamesByCarIds, getSummary, getStaleDays, staleCutoffIso, countStaleVehicles } from '../db/repository';
 import { HttpError, InvalidUrlError, fetchText } from '../crawler/fetch-helper';
 import { fetchHeydealerInput } from '../crawler/heydealer-parser';
 import { fetchHyundaiCertifiedInput } from '../crawler/hyundai-certified-parser';
-import { findMarketPeers, getMatchConfigFromEnv, type MatchConfig } from '../comparator/market-matcher';
+import { findMarketPeers, getMatchConfigFromEnv, matchPeers, type MatchConfig } from '../comparator/market-matcher';
+import { computeKnn, getKnnConfigFromEnv, type KnnConfig } from '../comparator/knn';
 import { analyzeComparison, specMaxAdjust, platformBasePremium, BASE_PLATFORM_PREMIUM, PLATFORM_PREMIUM_ENV } from '../comparator/analyzer';
 import { fmtYY } from '../cli/format';
 import type { ComparePlatform, CompareInput, CompareResult, CompareSettingsOverride, InspectionInfo, MarketMatch } from '../types';
@@ -149,7 +150,7 @@ export function applyOverrides(input: CompareInput, opts: CompareCliOptions): st
 
 // ───────── 비교 흐름 단계 (CLI는 단계 사이에 진행 메시지를 출력, 서버는 runCompare로 한 번에) ─────────
 
-export interface CompareSettings { matchConfig: MatchConfig; specMaxAdjust: number; hyundaiPremium: number; premiums: Record<ComparePlatform, number>; }
+export interface CompareSettings { matchConfig: MatchConfig; specMaxAdjust: number; hyundaiPremium: number; premiums: Record<ComparePlatform, number>; knn: KnnConfig; }
 
 /** 환경변수 검증 + 요청별 덮어쓰기 적용. 환경변수 오류 = INVALID_CONFIG, 덮어쓰기 값 오류 = INVALID_INPUT */
 export function resolveCompareSettings(override: CompareSettingsOverride = {}, env: NodeJS.ProcessEnv = process.env): CompareSettings {
@@ -157,11 +158,13 @@ export function resolveCompareSettings(override: CompareSettingsOverride = {}, e
   let spec: number;
   let premiums: Record<ComparePlatform, number>;
   let hyundaiPremium: number;
+  let knn: KnnConfig;
   try {
     base = getMatchConfigFromEnv(env);
     spec = specMaxAdjust(env);
     premiums = { heydealer: platformBasePremium('heydealer', env), kcar: platformBasePremium('kcar', env), hyundai_certified: platformBasePremium('hyundai_certified', env) };
     hyundaiPremium = premiums.hyundai_certified;
+    knn = getKnnConfigFromEnv(env);
   } catch (err) {
     throw new CompareError('INVALID_CONFIG', errMsg(err));
   }
@@ -170,6 +173,7 @@ export function resolveCompareSettings(override: CompareSettingsOverride = {}, e
   if (o.yearRange !== undefined && !isInt(o.yearRange, 0, 10)) throw new CompareError('INVALID_INPUT', `연식 범위는 0~10 정수여야 합니다: ${o.yearRange}`);
   if (o.minSamples !== undefined && !isInt(o.minSamples, 1, 100)) throw new CompareError('INVALID_INPUT', `최소 표본은 1~100 정수여야 합니다: ${o.minSamples}`);
   if (o.specMaxAdjust !== undefined && !isInt(o.specMaxAdjust, 0, 30)) throw new CompareError('INVALID_INPUT', `사양 보정 상한은 0~30 정수여야 합니다: ${o.specMaxAdjust}`);
+  if (o.knnN !== undefined && !isInt(o.knnN, 5, 200)) throw new CompareError('INVALID_INPUT', `유사 매물 수는 5~200 정수여야 합니다: ${o.knnN}`);
   let mileageRatios = base.mileageRatios;
   if (o.mileagePercents === null) mileageRatios = null;
   else if (o.mileagePercents !== undefined) {
@@ -184,6 +188,7 @@ export function resolveCompareSettings(override: CompareSettingsOverride = {}, e
     specMaxAdjust: o.specMaxAdjust ?? spec,
     hyundaiPremium,
     premiums,
+    knn: { ...knn, n: o.knnN ?? knn.n },
   };
 }
 
@@ -228,7 +233,8 @@ export function analyzeInput(input: CompareInput, settings: CompareSettings, now
     throw new CompareError('EMPTY_DB', '수집된 엔카 매물이 없습니다.', ['먼저 비교할 모델을 수집하세요: npx ts-node src/index.ts collect "<엔카 검색 URL>"']);
   }
   const matchConfig = settings.matchConfig;
-  const match = findMarketPeers(input, matchConfig, now);
+  const pool = findVehicles({ excludeStaleAsOf: now }); // findMarketPeers 와 같은 후보 (유사 매물 평가에도 사용)
+  const match = matchPeers(input, pool, matchConfig);
   if (match.peers.length === 0) {
     const details: string[] = [];
     const sc = staleCutoffIso(now);
@@ -248,11 +254,14 @@ export function analyzeInput(input: CompareInput, settings: CompareSettings, now
   const peerOptionNames = match.criteria.trimApplied && (input.optionPackages?.length ?? 0) > 0
     ? getOptionNamesByCarIds(match.basePool.map((v) => v.carId))
     : undefined;
-  const result = analyzeComparison(input, match, now, peerOptionNames, {
+  const base = analyzeComparison(input, match, now, peerOptionNames, {
     specMaxAdjust: settings.specMaxAdjust,
     basePremium: settings.premiums[input.platform],
   });
-  return { result, match };
+  const knn = settings.knn.enabled
+    ? computeKnn(input, pool, now, { n: settings.knn.n, primary: settings.knn.primary, basePremium: settings.premiums[input.platform], judgement: base.judgement })
+    : null;
+  return { result: { ...base, knn }, match };
 }
 
 export interface CompareDeps { fetchHtml: (url: string) => Promise<string>; now: () => Date; }

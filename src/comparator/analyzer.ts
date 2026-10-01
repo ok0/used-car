@@ -1,8 +1,8 @@
 import { scoreOwnerHistory } from '../scoring/owner';
 import type {
-  AccidentComparison, AccidentSeverity, ComparePlatform, CompareInput, CompareResult, CompareVerdict, InspectionComparison, InputOptionPackage,
-  MarketMatch, MarketStats, MileageComparison, OptionComparison, OwnerComparison, PackagePeerStats, PriceBucket, PriceComparison, PriceDiagnostics, QualityAxis,
-  QualityFactor, RentalComparison, VehicleData, VerdictDetail,
+  AccidentComparison, AccidentCompositionDiagnostics, AccidentCompositionTerm, AccidentSeverity, ComparePlatform, CompareInput, CompareResult, CompareVerdict,
+  InspectionComparison, InputOptionPackage, MarketMatch, MarketStats, MileageComparison, OptionComparison, OwnerComparison, PackagePeerStats, PriceBucket,
+  PriceComparison, PriceDiagnostics, QualityFactor, RentalComparison, VehicleData, VerdictDetail,
 } from '../types';
 
 export const BASE_PLATFORM_PREMIUM = 5;
@@ -19,6 +19,12 @@ export const MIN_SPEC_PEERS = 3;
 export const AGE_EFFECT_PER_YEAR = -3.8;
 export const MILEAGE_EFFECT_PER_10K = -2.3;
 export const RENTAL_EFFECT = -2.1;
+/** 사고 구성 보정 계수(%). 2026-10-01 DB 트림 고정효과 회귀(차령·주행·렌트와 동시 추정, n=1,125): 보험금 −0.58, 교환 −3.67, 판금 −2.73
+ *  → 유사 매물 평가 KNN_COEF(accident/replacement/welding)와 사실상 같아 그 값을 그대로 쓴다 (knn.ts와 같은 값 유지) */
+export const ACCIDENT_AMOUNT_EFFECT_PER_1M = -0.59; // 내차피해 보험금 100만원당
+export const ACCIDENT_AMOUNT_CAP_1M = 30;           // 보험금 상한 3,000만원 (관측 최대 약 3,041만원 — 그 밖은 외삽하지 않음)
+export const REPLACEMENT_EFFECT = -3.71;            // 교환(외판·골격) 있음
+export const WELDING_EFFECT = -2.83;                // 판금 있음
 export const PLATFORM_PREMIUM_ENV: Record<ComparePlatform, string> = {
   heydealer: 'COMPARE_PREMIUM_HEYDEALER', kcar: 'COMPARE_PREMIUM_KCAR', hyundai_certified: 'COMPARE_PREMIUM_HYUNDAI_CERTIFIED',
 };
@@ -167,8 +173,12 @@ function peerReplaced(v: VehicleData): boolean {
   return v.hasReplacement || v.diagPanelReplacement || v.diagFrameReplacement;
 }
 
+function peerInspectable(v: VehicleData): boolean {
+  return !v.isInspectionPrivate && (v.hasInspection || v.hasDiagnosis);
+}
+
 function compareInspection(input: CompareInput, peers: VehicleData[]): InspectionComparison {
-  const insp = peers.filter((v) => !v.isInspectionPrivate && (v.hasInspection || v.hasDiagnosis));
+  const insp = peers.filter(peerInspectable);
   const clean = insp.filter((v) => !peerReplaced(v) && !v.hasWelding && !v.hasCorrosion).length;
   const i = input.inspection;
   const same = i !== null && i.hasReplacement !== null && i.hasWelding !== null
@@ -328,23 +338,6 @@ function compareRental(input: CompareInput, peers: VehicleData[]): RentalCompari
   };
 }
 
-export function buildQualityFactors(input: CompareInput, _mileage: MileageComparison, accident: AccidentComparison): QualityFactor[] {
-  const factors: QualityFactor[] = [];
-  const add = (axis: QualityAxis, points: number, reason: string): void => {
-    if (points !== 0) factors.push({ axis, points, reason });
-  };
-  if (accident.severity === 'none') add('accident', 1, '무사고');
-  else if (accident.severity === 'moderate') add('accident', -3, '중간 규모 사고');
-  else if (accident.severity === 'severe') add('accident', -6, '대형 사고');
-  const i = input.inspection;
-  if (i !== null) {
-    if (i.isClean === true) add('inspection', 1, '성능점검 무사고');
-    else if (i.hasWelding === true) add('inspection', -2, '판금 이력');
-    else if (i.hasReplacement === true) add('inspection', -2, '교환 이력');
-  }
-  return factors;
-}
-
 export function decideVerdict(
   diffPercent: number, factors: QualityFactor[], input: CompareInput, severity: AccidentSeverity | null, specAdjustment: number = 0,
   basePremium: number = BASE_PLATFORM_PREMIUM, compositionAdjustment: number = 0,
@@ -377,6 +370,42 @@ export function decideVerdict(
   };
 }
 
+/** 입력 내차피해 보험금(100만원 단위, 상한 전). 건수·금액 모두 없음 또는 사고가 있는데 금액 미상 → null */
+export function inputAccidentMillions(count: number | null, amount: number | null): number | null {
+  if (count === null && amount === null) return null;
+  if (amount !== null && amount > 0) return amount / 1e6;
+  if ((count ?? 0) === 0) return 0;
+  return null;
+}
+
+function compositionTerm(input: number | null, peerValues: number[], coef: number): AccidentCompositionTerm {
+  const peerMean = avg(peerValues);
+  return {
+    input, peerMean, peerKnownCount: peerValues.length,
+    percent: input === null || peerMean === null ? 0 : coef * (input - peerMean),
+  };
+}
+
+/** 동급 대비 사고 심각도(보험금·교환·판금) 차이로 예상되는 가격 차이. 동급 쪽은 보험이력·성능점검 공개 매물만 평균 */
+export function computeAccidentComposition(input: CompareInput, peers: VehicleData[]): AccidentCompositionDiagnostics {
+  const cap = (m: number): number => Math.min(m, ACCIDENT_AMOUNT_CAP_1M);
+  const known = peers.filter((v) => !v.isInsurancePrivate);
+  const insp = peers.filter(peerInspectable);
+  const inAmt = inputAccidentMillions(input.accidentCount, input.accidentAmount);
+  const b01 = (b: boolean | null | undefined): number | null => (b === null || b === undefined ? null : b ? 1 : 0);
+  const amount = compositionTerm(inAmt === null ? null : cap(inAmt), known.map((v) => cap(v.myDamageAmount / 1e6)), ACCIDENT_AMOUNT_EFFECT_PER_1M);
+  const replacement = compositionTerm(b01(input.inspection?.hasReplacement), insp.map((v) => (peerReplaced(v) ? 1 : 0)), REPLACEMENT_EFFECT);
+  const welding = compositionTerm(b01(input.inspection?.hasWelding), insp.map((v) => (v.hasWelding ? 1 : 0)), WELDING_EFFECT);
+  return {
+    amount, replacement, welding,
+    percent: amount.percent + replacement.percent + welding.percent,
+    peerAccidentCount: known.filter((v) => v.myDamageCount > 0).length,
+    peerInsuranceKnownCount: known.length,
+    peerRepairCount: insp.filter((v) => peerReplaced(v) || v.hasWelding).length,
+    peerInspectableCount: insp.length,
+  };
+}
+
 export function computePriceDiagnostics(input: CompareInput, peers: VehicleData[], now: Date): PriceDiagnostics {
   const n = peers.length;
   const inputAgeMonths = calcAgeMonths(input.year, input.month, now);
@@ -387,7 +416,10 @@ export function computePriceDiagnostics(input: CompareInput, peers: VehicleData[
   const known = peers.filter((v) => !v.isInsurancePrivate);
   const peerRentalRatio = ratio(known.filter((v) => v.hasRentalHistory).length, known.length);
   const rentalTerm = input.hasRentalHistory === null || peerRentalRatio === null ? 0 : ((input.hasRentalHistory ? 1 : 0) - peerRentalRatio) * RENTAL_EFFECT;
-  const comp = AGE_EFFECT_PER_YEAR * ageGapMonths / 12 + MILEAGE_EFFECT_PER_10K * mileageGapKm / 10000 + rentalTerm;
+  const ageTerm = AGE_EFFECT_PER_YEAR * ageGapMonths / 12;
+  const mileageTerm = MILEAGE_EFFECT_PER_10K * mileageGapKm / 10000;
+  const accident = computeAccidentComposition(input, peers);
+  const comp = ageTerm + mileageTerm + rentalTerm + accident.percent;
   let sd: number | null = null;
   if (n >= 3) {
     const lp = peers.map((v) => Math.log(v.price));
@@ -398,6 +430,7 @@ export function computePriceDiagnostics(input: CompareInput, peers: VehicleData[
     inputAgeMonths, peerMeanAgeMonths, ageGapMonths, peerMeanMileage, mileageGapKm, peerRentalRatio,
     compositionPercent: Math.round(comp * 10) / 10,
     peerLogSdPercent: sd, meanStdErrPercent: sd === null ? null : sd / Math.sqrt(n),
+    ageTermPercent: ageTerm, mileageTermPercent: mileageTerm, rentalTermPercent: rentalTerm, accident,
   };
 }
 
@@ -416,7 +449,7 @@ export function analyzeComparison(
   const mileage = compareMileage(input, match.basePool, now);
   const accident = compareAccident(input, peers);
   const option = compareOptions(input, peers, match.criteria.trimApplied, match.basePool, peerOptionNames);
-  const factors = buildQualityFactors(input, mileage, accident);
+  const factors: QualityFactor[] = []; // 사고·성능점검은 허용치 가감 대신 구성 보정(기대 가격)에 반영 — 이중 계산 방지
   const diagnostics = computePriceDiagnostics(input, peers, now);
   return {
     input,
@@ -438,5 +471,6 @@ export function analyzeComparison(
       diagnostics.compositionPercent,
     ),
     diagnostics,
+    knn: null,
   };
 }

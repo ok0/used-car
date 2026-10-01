@@ -32,6 +32,9 @@ export interface CompareSettingsInfo {
   minSamples: number;
   specMaxAdjust: number;
   hyundaiPremium: number;
+  knnEnabled: boolean;               // COMPARE_KNN
+  knnN: number;                      // 유사 매물 이웃 수 (요청 덮어쓰기 반영)
+  verdictSource: 'current' | 'knn';  // COMPARE_VERDICT_SOURCE (종합 판정에 쓰는 평가)
 }
 export interface SettingsResponse { compare: CompareSettingsInfo; staleDays: number }
 
@@ -79,6 +82,7 @@ export interface CompareResponse {
   result: CompareResult;
   verdictLines: string[];            // reporter.buildVerdictLines
   recommendations: string[];         // reporter.buildRecommendations
+  knnLines: string[];                // reporter.buildKnnLines (유사 매물 평가 요약, 꺼져 있으면 [])
   peers: VehicleListItem[];          // 동급 매물 (가격 오름차순)
   analyzedAt: string;                // ISO 8601
 }
@@ -196,6 +200,7 @@ export type ConfigKey =
   | 'ENCAR_FETCH_MARKET' | 'ENCAR_FETCH_YEARLY'
   | 'COMPARE_MILEAGE_RANGE' | 'COMPARE_YEAR_RANGE' | 'COMPARE_MIN_SAMPLES' | 'COMPARE_SPEC_MAX_ADJUST'
   | 'COMPARE_PREMIUM_HEYDEALER' | 'COMPARE_PREMIUM_KCAR' | 'COMPARE_PREMIUM_HYUNDAI_CERTIFIED'
+  | 'COMPARE_KNN' | 'COMPARE_KNN_N' | 'COMPARE_VERDICT_SOURCE'
   | 'STALE_DAYS' | 'GUI_PORT';
 export interface ConfigEntry {
   key: ConfigKey;

@@ -7,6 +7,7 @@ import { Notice } from '../../components/States';
 import { VehicleTable } from '../../components/VehicleTable';
 import { AxisCards } from './AxisCards';
 import { OptionSection } from './OptionSection';
+import { KnnSection } from './KnnSection';
 
 export function CompareResultView({ r }: { r: CompareResponse }) {
   const x = r.result;
@@ -14,12 +15,14 @@ export function CompareResultView({ r }: { r: CompareResponse }) {
   const c = x.criteria;
   const m = x.market;
   const j = x.judgement;
+  const g = x.diagnostics;
+  const headVerdict = x.knn !== null && x.knn.primary ? x.knn.verdict : j.verdict; // COMPARE_VERDICT_SOURCE=knn 이면 유사 매물 평가
   const trimLabel = c.trimApplied ? `트림 '${c.trim}'` : c.trim !== null ? `모델 전체 (트림 '${c.trim}' 일치 ${c.trimSampleCount}대로 부족)` : '모델 전체';
   return (
     <div className="stack">
-      <section className={`card verdict ${VERDICT_META[j.verdict].cls}`}>
+      <section className={`card verdict ${VERDICT_META[headVerdict].cls}`}>
         <div className="verdict-top">
-          <VerdictBadge verdict={j.verdict} large />
+          <VerdictBadge verdict={headVerdict} large />
           <div>
             <h2 className="verdict-title">{r.title} <span className="muted">({PLATFORM_LABEL[i.platform]})</span></h2>
             <p className="muted">
@@ -29,6 +32,7 @@ export function CompareResultView({ r }: { r: CompareResponse }) {
             </p>
           </div>
         </div>
+        {x.knn !== null && x.knn.primary && <p className="muted small">종합 판정 기준: 유사 매물 평가 (COMPARE_VERDICT_SOURCE=knn) · 현재 평가 판정: {VERDICT_META[j.verdict].label}</p>}
         <ul className="verdict-lines">{r.verdictLines.map((l, k) => <li key={k}>{l}</li>)}</ul>
       </section>
 
@@ -46,8 +50,10 @@ export function CompareResultView({ r }: { r: CompareResponse }) {
           <div className="stat"><div className="stat-label">P25 ~ P75</div><div className="stat-value">{fmtNum(m.p25)} ~ {fmtManwon(m.p75)}</div></div>
           <div className="stat"><div className="stat-label">최저 ~ 최고 ({x.sampleCount}대)</div><div className="stat-value">{fmtNum(m.min)} ~ {fmtManwon(m.max)}</div></div>
         </div>
-        <Histogram price={x.price} market={m} />
+        <Histogram price={x.price} market={m} knn={x.knn} />
       </section>
+
+      <KnnSection r={r} />
 
       <AxisCards r={r} />
 
@@ -57,7 +63,10 @@ export function CompareResultView({ r }: { r: CompareResponse }) {
           <table className="table compact"><tbody>
             <tr><td>동급 평균 대비 가격 차이</td><td className="num">{fmtSigned(j.diffPercent)}%</td></tr>
             <tr><td>옵션·사양 보정 (기대 시세)</td><td className="num">{j.specAdjustment === 0 ? '없음' : `${fmtSigned(j.specAdjustment)}%`}</td></tr>
-            <tr><td>연식·주행·렌트 구성 보정</td><td className="num">{j.compositionAdjustment === 0 ? '없음' : `${fmtSigned(-j.compositionAdjustment)}%`}</td></tr>
+            <tr><td>연식·주행·렌트·사고 구성 보정</td><td className="num">{j.compositionAdjustment === 0 ? '없음' : `${fmtSigned(-j.compositionAdjustment)}%`}</td></tr>
+            {j.compositionAdjustment !== 0 && ([['차령', g.ageTermPercent], ['주행거리', g.mileageTermPercent], ['렌트 이력', g.rentalTermPercent], ['사고 (보험금·교환·판금)', g.accident.percent]] as [string, number][]).map(([k, v]) => (
+              <tr key={k}><td className="indent">{k}</td><td className="num">{fmtSigned(-v)}%</td></tr>
+            ))}
             <tr><td>보정 후 가격 차이</td><td className="num"><strong>{fmtSigned(j.adjustedDiffPercent)}%</strong></td></tr>
             <tr><td>기본 플랫폼 프리미엄</td><td className="num">{j.basePremium}%</td></tr>
             {j.factors.map((f) => <tr key={f.axis + f.reason}><td className="indent">품질 보정: {f.reason}</td><td className="num">{f.points > 0 ? '+' : ''}{f.points}%p</td></tr>)}
@@ -86,8 +95,12 @@ export function CompareResultView({ r }: { r: CompareResponse }) {
       <OptionSection r={r} />
 
       <section className="card">
-        <h2 className="card-title">동급 매물 {r.peers.length}대 <span className="muted small">가격 낮은순 · 행을 누르면 상세</span></h2>
-        <VehicleTable items={r.peers} marker={{ price: i.price, label: `이 매물 — ${r.title}` }} />
+        <h2 className="card-title">동급 매물 {r.peers.length}대 <span className="muted small">가격 낮은순 · 사고 있는 매물 강조 · 행을 누르면 상세</span></h2>
+        <VehicleTable items={r.peers} marker={{
+          label: `이 매물 — ${r.title}`, price: i.price, year: i.year, month: i.month, mileage: i.mileage,
+          accident: i.hasSevereAccident ? '전손/침수 등' : i.accidentCount === null ? '-' : i.accidentCount === 0 ? '무사고' : `${i.accidentCount}건`,
+          ownerChangeCount: i.ownerChangeCount, hasRentalHistory: i.hasRentalHistory,
+        }} highlightAccident />
       </section>
     </div>
   );

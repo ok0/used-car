@@ -12,7 +12,7 @@ import { ENV_KEYS, EnvSettingsError, readEnvFile, saveEnvChanges, type EnvFileSt
 import { createJobManager, defaultCollectParams, JobError, type JobManager, type JobManagerOptions } from './jobs';
 import { UrlBodyError, parseCollectBody, parseConfigBody, parsePurgeBody, parseSearchUrlBody } from './job-body';
 import { DEFAULT_WEIGHTS } from '../scoring/calculator';
-import { inputTitle, buildVerdictLines, buildRecommendations } from '../comparator/reporter';
+import { inputTitle, buildVerdictLines, buildRecommendations, buildKnnLines } from '../comparator/reporter';
 import { CompareError, resolveCompareSettings, runCompare, type CompareSettings } from '../services/compare';
 import { listVehicles, getVehicleDetail, toListItem } from '../services/vehicles';
 import { BusyError, createExternalFetcher } from './external-fetch';
@@ -70,6 +70,9 @@ export function settingsInfo(s: CompareSettings): CompareSettingsInfo {
     minSamples: s.matchConfig.minSamples,
     specMaxAdjust: s.specMaxAdjust,
     hyundaiPremium: s.hyundaiPremium,
+    knnEnabled: s.knn.enabled,
+    knnN: s.knn.n,
+    verdictSource: s.knn.primary ? 'knn' : 'current',
   };
 }
 
@@ -185,6 +188,7 @@ export function buildApp(opts: AppOptions): FastifyInstance {
       result: o.result,
       verdictLines: buildVerdictLines(o.result),
       recommendations: buildRecommendations(o.result),
+      knnLines: buildKnnLines(o.result),
       peers,
       analyzedAt: at.toISOString(),
     };

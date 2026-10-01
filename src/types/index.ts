@@ -241,7 +241,25 @@ export interface OptionComparison {
 }
 export type QualityAxis = 'accident' | 'inspection' | 'owner' | 'mileage' | 'rental';
 export interface QualityFactor { axis: QualityAxis; points: number; reason: string; }
-/** 가격 비교 진단 (판정에는 미반영). compositionPercent = 동급 대비 차령·주행거리·렌트비율 차이만으로 예상되는 가격 차이(%) */
+/** 사고 구성 보정의 한 항. 단위: 보험금 = 100만원(상한 적용), 교환·판금 = 0/1 (동급 평균은 비율) */
+export interface AccidentCompositionTerm {
+  input: number | null;      // 입력 값, null = 정보 미제공 (이 항 보정 0)
+  peerMean: number | null;   // 동급 평균 (보험·점검 공개 동급만), 해당 동급이 없으면 null
+  peerKnownCount: number;    // 평균에 쓴 동급 수
+  percent: number;           // 계수 × (입력 − 동급 평균), 입력 또는 동급 정보가 없으면 0
+}
+/** 동급 대비 사고 심각도 차이로 예상되는 가격 차이 (구성 보정의 사고 항) */
+export interface AccidentCompositionDiagnostics {
+  amount: AccidentCompositionTerm;       // 내차피해 보험금
+  replacement: AccidentCompositionTerm;  // 교환 (외판·골격)
+  welding: AccidentCompositionTerm;      // 판금
+  percent: number;                       // 세 항의 합 (반올림 전)
+  peerAccidentCount: number;             // 보험이력 공개 동급 중 내차피해 1건 이상
+  peerInsuranceKnownCount: number;       // 보험이력 공개 동급 수
+  peerRepairCount: number;               // 점검 공개 동급 중 교환 또는 판금
+  peerInspectableCount: number;          // 점검 공개 동급 수
+}
+/** 가격 비교 진단. compositionPercent = 동급 대비 차령·주행거리·렌트비율·사고(보험금·교환·판금) 차이만으로 예상되는 가격 차이(%), 판정에 반영 */
 export interface PriceDiagnostics {
   inputAgeMonths: number;
   peerMeanAgeMonths: number;
@@ -252,6 +270,10 @@ export interface PriceDiagnostics {
   compositionPercent: number;        // 소수 1자리 반올림
   peerLogSdPercent: number | null;   // ln(동급 가격) 표본표준편차×100, 동급 3대 미만이면 null
   meanStdErrPercent: number | null;  // peerLogSdPercent / sqrt(동급 수)
+  ageTermPercent: number;            // compositionPercent 분해 (반올림 전): 차령
+  mileageTermPercent: number;        // 주행거리
+  rentalTermPercent: number;         // 렌트 이력
+  accident: AccidentCompositionDiagnostics; // 사고 (accident.percent)
 }
 
 export interface VerdictDetail {
@@ -266,6 +288,62 @@ export interface VerdictDetail {
   compositionAdjustment: number;
   factors: QualityFactor[];
   criticalReasons: string[];
+}
+/** 유사 매물(가중 최근접 이웃) 거리 항목. 거리 = 항목별 "예상 가격 영향(%)"의 절대값 합 */
+export type KnnTermKey = 'age' | 'mileage' | 'rental' | 'accident' | 'replacement' | 'welding' | 'basePrice' | 'options' | 'trim' | 'powertrain';
+export interface KnnContribution { key: KnnTermKey; percent: number } // 이 항목의 거리 기여 (%p, 0보다 큰 항목만)
+export interface KnnNeighbor {
+  carId: string;
+  modelName: string | null;
+  gradeName: string | null;
+  gradeDetail: string | null;
+  year: number;
+  month: number;
+  mileage: number;
+  price: number;                    // 엔카 호가 (만원)
+  hasRentalHistory: boolean | null; // 보험이력 비공개면 null
+  accidentAmount: number | null;    // 내차피해 보험금 (원), 비공개면 null
+  hasReplacement: boolean | null;   // 교환(외판·골격, 엔카진단 포함). 점검 정보 없으면 null
+  hasWelding: boolean | null;
+  originPriceBase: number | null;   // 기본 신차가 (만원)
+  originPriceOptions: number | null;// 선택옵션 신차가 합계 (만원)
+  distance: number;                 // %p (작을수록 비슷함)
+  weight: number;                   // 정규화 가중치 (합 1)
+  adjustmentPercent: number;        // 입력 조건으로 맞춘 가격 보정 (%; 100·Δln가격)
+  adjustedPrice: number;            // 보정 후 가격 (만원)
+  contributions: KnnContribution[]; // 거리 기여 큰 순
+}
+export type KnnConfidence = 'high' | 'medium' | 'low';
+export interface KnnAgreement {
+  currentPercent: number;  // 현재 평가: 보정 후 가격 차이 (judgement.adjustedDiffPercent)
+  knnPercent: number;      // 유사 매물 평가: 기대 가격 대비 차이 (KnnResult.diffPercent)
+  gap: number;             // knnPercent − currentPercent (%p)
+  sameVerdict: boolean;
+  level: 'agree' | 'minor' | 'major'; // |gap| < 3 / < 6 / 그 이상
+}
+export interface KnnResult {
+  k: number;                    // 사용한 이웃 수 (후보가 적으면 그보다 작음)
+  candidateCount: number;       // 같은 모델 후보 대수 (연식 제한 없음)
+  neighbors: KnnNeighbor[];     // 거리 오름차순
+  expectedPrice: number;        // 기대 가격 (만원)
+  intervalLow: number;          // 95% 예측구간 (만원)
+  intervalHigh: number;
+  diffPercent: number;          // (입력 가격 / 기대 가격 − 1) × 100
+  meanDistance: number;         // 가중 평균 거리 (%p)
+  effectiveCount: number;       // 유효 이웃 수 (Σw)²/Σw²
+  closeCount: number;           // 거리 10%p 이하 이웃 수
+  confidence: KnnConfidence;
+  usedTerms: KnnTermKey[];      // 입력에 값이 있어 거리·보정에 쓴 항목
+  missingTerms: KnnTermKey[];   // 입력에 값이 없어 뺀 항목 (예측구간에 불확실성으로 반영)
+  inputBasePrice: number | null;
+  basePriceSource: 'input' | 'trim_peers' | 'origin_estimate' | null;
+  inputOptionPercent: number | null; // 선택옵션 신차가 / 기본 신차가 × 100
+  basePremium: number;          // 플랫폼 기본 프리미엄 (품질 가감 없음 — 품질은 기대 가격에 이미 반영)
+  excessOverAllowance: number;  // diffPercent − basePremium
+  verdict: CompareVerdict;      // 현재 판정과 같은 구간 규칙 (참고용)
+  agreement: KnnAgreement;
+  primary: boolean;             // COMPARE_VERDICT_SOURCE=knn 이면 true (종합 판정에 이 결과 사용)
+  warnings: string[];
 }
 export interface CompareResult {
   input: CompareInput;
@@ -282,6 +360,7 @@ export interface CompareResult {
   option: OptionComparison;
   judgement: VerdictDetail;
   diagnostics: PriceDiagnostics;
+  knn: KnnResult | null;        // 유사 매물 평가 (COMPARE_KNN=0 이거나 후보 없음 = null)
 }
 
 /** 엔카 검색 API(SearchResults[]) 1건의 기본 정보 */
@@ -338,6 +417,7 @@ export interface CompareSettingsOverride {
   mileagePercents?: number[] | null; // 주행거리 ±% 단계 (1~5개, 각 0 초과 500 이하). null = 제한 없음
   minSamples?: number;               // 최소 표본 (1~100 정수)
   specMaxAdjust?: number;            // 사양 보정 상한 % (0~30 정수, 0 = 끔)
+  knnN?: number;                     // 유사 매물 이웃 수 (5~200 정수)
 }
 
 /** 목록·동급 표 1행 (VehicleData 요약) */

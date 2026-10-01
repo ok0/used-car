@@ -36,7 +36,7 @@ export function getMatchConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Mat
   }
   return { minSamples, yearRange, mileageRatios };
 }
-const MODEL_LEVELS: readonly ModelMatchLevel[] = ['exact', 'base', 'tokens', 'loose'];
+export const MODEL_LEVELS: readonly ModelMatchLevel[] = ['exact', 'base', 'tokens', 'loose'];
 const GENERATION_WORDS: ReadonlySet<string> = new Set(['더', '뉴', '올', '디', 'the', 'new', 'all', '신형']);
 
 export function normTokens(s: string | null | undefined): string[] {
@@ -103,7 +103,7 @@ export function matchesModel(v: VehicleData, input: CompareInput, level: ModelMa
 }
 
 /** 입력 트림에 같은 단어가 반복되면("... 캘리그래피 캘리그래피") 하나로 줄인다 */
-function dedupeWords(s: string): string {
+export function dedupeWords(s: string): string {
   const seen = new Set<string>();
   return s.split(/\s+/).filter((w) => w !== '' && !seen.has(w) && (seen.add(w), true)).join(' ');
 }

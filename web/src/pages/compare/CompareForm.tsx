@@ -98,6 +98,7 @@ export function CompareForm({ form, onChange, onSubmit, busy, defaults, formErro
           <Field label="주행거리 범위 (±%)" hint='예: 40,60 (모자라면 다음 단계로 넓힘) 또는 "없음"'>{text('mileagePercents')}</Field>
           <Field label="최소 표본 (대)" hint="1~100">{text('minSamples', '', 'numeric')}</Field>
           <Field label="사양 보정 상한 (±%)" hint="0이면 끔, 0~30">{text('specMaxAdjust', '', 'numeric')}</Field>
+          <Field label="유사 매물 수 (대)" hint="유사 매물 평가의 이웃 수, 5~200">{text('knnN', '', 'numeric')}</Field>
         </fieldset>
         {defaults && <button type="button" className="btn btn-ghost" onClick={() => onChange({ ...form, ...settingsToForm(defaults) })}>기본값으로</button>}
       </details>
