@@ -1,12 +1,10 @@
-import path from 'node:path';
-import { getDb, DB_PATH } from '../db/connection';
-import { getStaleDays, staleCutoffIso, countVehicles, getStaleCarIds, getStaleBreakdown, deleteStaleVehicles, findVehicleById } from '../db/repository';
-import { rescoreAll, type RescoreSummary } from '../scoring/rescore';
-import { DEFAULT_WEIGHTS } from '../scoring/calculator';
+import { findVehicleById } from '../db/repository';
+import type { RescoreSummary } from '../scoring/rescore';
+import { planPurge, executePurge, PURGE_MAX_RATIO, PURGE_BACKUP_FILE } from '../services/purge';
+import { tryAcquireJobLock, lockHeldMessage } from '../db/job-lock';
 import { fmtManwon, fmtYY, fmtKst, vehicleLabel } from './format';
 
-export const PURGE_MAX_RATIO = 0.5;
-export const PURGE_BACKUP_FILE = 'used-car.purge-backup.db';
+export { PURGE_MAX_RATIO, PURGE_BACKUP_FILE };
 const PURGE_LIST_MAX = 20;
 
 export interface PurgeOptions {
@@ -34,9 +32,10 @@ export interface PurgeReport {
 export async function runPurge(opts: PurgeOptions, deps: PurgeDeps = defaultPurgeDeps): Promise<PurgeReport> {
   const log = deps.log;
   const now = deps.now();
-  const days = getStaleDays();
-  const cutoff = staleCutoffIso(now, days);
-  const totalCount = countVehicles();
+  const plan = planPurge(now);
+  const days = plan.staleDays;
+  const cutoff = plan.cutoff;
+  const totalCount = plan.totalCount;
 
   const report: PurgeReport = {
     staleDays: days,
@@ -55,7 +54,7 @@ export async function runPurge(opts: PurgeOptions, deps: PurgeDeps = defaultPurg
     return report;
   }
 
-  report.candidates = getStaleCarIds(cutoff);
+  report.candidates = plan.candidates;
   const n = report.candidates.length;
 
   if (n === 0) {
@@ -65,8 +64,7 @@ export async function runPurge(opts: PurgeOptions, deps: PurgeDeps = defaultPurg
 
   log(`🧹 ${days}일 이상 엔카 목록에서 확인되지 않은 매물 ${n}대 / 전체 ${totalCount}대 (마지막 확인이 ${fmtKst(cutoff)} 이전) — 판매 완료·광고 종료 또는 렌트/리스/중복매물로 바뀐 매물, 혹은 그 검색 조건을 ${days}일 넘게 다시 수집하지 않은 매물입니다`);
   log('   모델별 (미확인 / DB 전체):');
-  const breakdown = getStaleBreakdown(cutoff);
-  for (const row of breakdown) {
+  for (const row of plan.breakdown) {
     const suffix = row.stale === row.total
       ? ' ← 이 모델 전체가 미확인: 판매보다는 최근 재수집하지 않았을 가능성이 큽니다. 계속 볼 모델이면 삭제 대신 collect로 다시 수집하세요'
       : '';
@@ -80,8 +78,8 @@ export async function runPurge(opts: PurgeOptions, deps: PurgeDeps = defaultPurg
   }
   if (n > PURGE_LIST_MAX) log(`   … 외 ${n - PURGE_LIST_MAX}대`);
 
-  const overCap = n > totalCount * PURGE_MAX_RATIO;
-  const pct = Math.round((n / totalCount) * 100);
+  const overCap = plan.overCap;
+  const pct = plan.pct;
 
   if (!opts.apply) {
     if (overCap) {
@@ -98,11 +96,10 @@ export async function runPurge(opts: PurgeOptions, deps: PurgeDeps = defaultPurg
     return report;
   }
 
-  report.backupPath = path.join(path.dirname(DB_PATH), PURGE_BACKUP_FILE);
-  await getDb().backup(report.backupPath);
-
-  report.deleted = deleteStaleVehicles(report.candidates, cutoff);
-  report.rescored = rescoreAll(DEFAULT_WEIGHTS, now);
+  const ex = await executePurge(plan, now);
+  report.backupPath = ex.backupPath;
+  report.deleted = ex.deleted;
+  report.rescored = ex.rescored;
 
   log(`🗑 ${report.deleted.length}대 삭제 완료${report.deleted.length < n ? ` (${n - report.deleted.length}대는 그사이 다시 확인되어 유지)` : ''} | 재채점: ${report.rescored.total}대 중 ${report.rescored.changed}대 변경`);
   log(`   삭제 전 백업: ${report.backupPath} (되돌리려면 이 파일을 data/used-car.db 로 복사. 다음 purge --apply 때 덮어씀)`);
@@ -111,6 +108,15 @@ export async function runPurge(opts: PurgeOptions, deps: PurgeDeps = defaultPurg
 }
 
 export async function purgeCommand(opts: PurgeOptions): Promise<number> {
-  const r = await runPurge(opts);
-  return r.skippedReason !== null ? 1 : 0;
+  const lock = opts.apply ? tryAcquireJobLock('purge') : null;
+  if (lock !== null && !lock.ok) {
+    console.error(`⛔ ${lockHeldMessage(lock.holder)}`);
+    return 1;
+  }
+  try {
+    const r = await runPurge(opts);
+    return r.skippedReason !== null ? 1 : 0;
+  } finally {
+    if (lock?.ok) lock.release();
+  }
 }

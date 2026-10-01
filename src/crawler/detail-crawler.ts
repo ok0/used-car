@@ -80,6 +80,8 @@ export async function fetchYearlyPrices(v: RawVehicle, collectedAt: string): Pro
 export interface FetchDetailOptions {
   search?: SearchResult | null;
   searchQuery?: string | null;
+  fetchMarket?: boolean;   // 기본: ENCAR_FETCH_MARKET
+  fetchYearly?: boolean;   // 기본: ENCAR_FETCH_YEARLY
 }
 
 export async function fetchCollectedVehicle(carId: string, opts: FetchDetailOptions = {}): Promise<CollectedVehicle> {
@@ -105,8 +107,8 @@ export async function fetchCollectedVehicle(carId: string, opts: FetchDetailOpti
     fetchOptional<RawInspection>(`${READSIDE}/inspection/vehicle/${actualId}`, 'inspection'),
     fetchOptional<RawDiagnosis>(`${READSIDE}/diagnosis/vehicle/${actualId}`, 'diagnosis'),
     fetchOptional<RawOptionItem[]>(`${READSIDE}/vehicles/car/${actualId}/options/choice`, 'options'),
-    isMarketFetchEnabled() ? fetchMarketPrice(v, collectedAt) : Promise.resolve(null),
-    isYearlyFetchEnabled() ? fetchYearlyPrices(v, collectedAt) : Promise.resolve([] as YearlyPrice[]),
+    (opts.fetchMarket ?? isMarketFetchEnabled()) ? fetchMarketPrice(v, collectedAt) : Promise.resolve(null),
+    (opts.fetchYearly ?? isYearlyFetchEnabled()) ? fetchYearlyPrices(v, collectedAt) : Promise.resolve([] as YearlyPrice[]),
     userId ? fetchOptional<RawUser>(`${READSIDE}/user/${encodeURIComponent(userId)}`, 'user') : Promise.resolve(null),
   ]);
 
@@ -217,6 +219,8 @@ export interface CrawlDetailsOptions {
   onResult?: (e: DetailResultEvent) => void;
   log?: (line: string) => void;
   shouldStop?: () => boolean;
+  fetchMarket?: boolean;   // 기본: ENCAR_FETCH_MARKET
+  fetchYearly?: boolean;   // 기본: ENCAR_FETCH_YEARLY
 }
 
 export interface CrawlDetailsResult {
@@ -248,6 +252,8 @@ export async function crawlDetails(items: SearchResult[], opts: CrawlDetailsOpti
         bundle = await fetchCollectedVehicle(item.carId, {
           search: item,
           searchQuery: opts.searchQuery ?? null,
+          fetchMarket: opts.fetchMarket,
+          fetchYearly: opts.fetchYearly,
         });
         results[i] = bundle;
       } catch (err) {

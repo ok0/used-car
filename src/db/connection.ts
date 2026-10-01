@@ -33,6 +33,7 @@ export function getDb(): Database.Database {
   }
   fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
   const db = new Database(DB_PATH);
+  db.pragma('busy_timeout = 5000');
   db.pragma('foreign_keys = ON');
   initSchema(db);
   instance = db;
@@ -43,5 +44,20 @@ export function closeDb(): void {
   if (instance) {
     instance.close();
     instance = null;
+  }
+}
+
+/** 읽기 전용 모드(GUI 서버)에서도 fn 실행 동안만 읽기-쓰기 연결을 쓴다. 끝나면 연결을 닫고 원래 모드로 돌린다(다음 getDb()가 다시 연다).
+ *  같은 프로세스의 다른 코드도 이 동안 getDb()로 같은 쓰기 연결을 쓴다. 한 번에 하나만 호출할 것 (서버 작업 큐가 보장) */
+export async function withWritableDb<T>(fn: () => Promise<T>): Promise<T> {
+  const prev = readonlyMode;
+  closeDb();
+  readonlyMode = false;
+  try {
+    getDb();
+    return await fn();
+  } finally {
+    closeDb();
+    readonlyMode = prev;
   }
 }

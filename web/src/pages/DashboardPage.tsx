@@ -15,7 +15,7 @@ export function DashboardPage() {
   if (s.totalCount === 0) {
     return (
       <Empty title="수집된 매물이 없습니다">
-        <p>터미널에서 엔카 검색 URL로 먼저 수집하세요.</p>
+        <p><Link to="/collect">수집 화면</Link>에서 엔카 검색 URL로 먼저 수집하세요. 터미널에서는:</p>
         <pre className="code">npx ts-node src/index.ts collect "&lt;엔카 검색 URL&gt;"</pre>
       </Empty>
     );
@@ -29,10 +29,10 @@ export function DashboardPage() {
       <h1 className="page-title">대시보드</h1>
       {s.staleCount > 0 && (
         <div className="notice notice-info">
-          <p>아래 통계는 활성 매물 기준입니다. 엔카 목록에서 {s.staleDays}일 이상 확인되지 않은 매물 {fmtNum(s.staleCount)}대는 비교·시세·가격 점수 기준에서 제외됩니다. 정리: <code>npx ts-node src/index.ts purge</code></p>
+          <p>아래 통계는 활성 매물 기준입니다. 엔카 목록에서 {s.staleDays}일 이상 확인되지 않은 매물 {fmtNum(s.staleCount)}대는 비교·시세·가격 점수 기준에서 제외됩니다. 확인·삭제: <Link to="/purge">정리 화면</Link></p>
         </div>
       )}
-      {s.activeCount === 0 && <div className="notice notice-warn"><p>모든 매물이 미확인 상태입니다 — 계속 볼 검색 URL로 다시 collect 하세요.</p></div>}
+      {s.activeCount === 0 && <div className="notice notice-warn"><p>모든 매물이 미확인 상태입니다 — 계속 볼 검색 URL로 <Link to="/collect">다시 수집</Link>하세요.</p></div>}
       <div className="grid-4">
         <div className="card stat"><div className="stat-label">총 매물</div><div className="stat-value">{fmtNum(s.totalCount)}대</div>
           {s.staleDays > 0 && <div className="stat-sub">활성 {fmtNum(s.activeCount)} · 미확인 {fmtNum(s.staleCount)}</div>}</div>

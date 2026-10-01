@@ -17,8 +17,13 @@ import { scoreVehicle, rescoreAll, type RescoreSummary } from '../scoring/rescor
 import { DEFAULT_WEIGHTS } from '../scoring/calculator';
 import { GRADES, type CollectedVehicle, type Grade, type ScoreResult, type SearchResult } from '../types';
 import { fmtManwon, fmtYY, fmtGradeDistribution, vehicleLabel } from './format';
+import { tryAcquireJobLock, lockHeldMessage } from '../db/job-lock';
 
-export interface CollectOptions { startPage?: number; maxPages?: number; limit?: number; skipExisting?: boolean; prune?: boolean; }
+export interface CollectOptions {
+  startPage?: number; maxPages?: number; limit?: number; skipExisting?: boolean; prune?: boolean;
+  fetchMarket?: boolean;  // 이번 실행에만 적용 (기본: ENCAR_FETCH_MARKET). CLI는 지정하지 않음
+  fetchYearly?: boolean;  // 이번 실행에만 적용 (기본: ENCAR_FETCH_YEARLY). CLI는 지정하지 않음
+}
 export const PRUNE_MAX_RATIO = 0.5;
 export const PRUNE_BACKUP_FILE = 'used-car.prune-backup.db';
 const PRUNE_LIST_MAX = 20;
@@ -31,11 +36,19 @@ export interface PruneReport {
   backupPath: string | null; // (prune) 삭제 직전 백업 파일
   skippedReason: string | null;
 }
+/** 진행 단계 (GUI 진행 표시용 구조화 이벤트). CLI는 쓰지 않음 */
+export type CollectPhase = 'list' | 'detail' | 'prune' | 'rescore';
+export type CollectProgressEvent =
+  | { type: 'phase'; phase: CollectPhase }
+  | { type: 'listPage'; page: number; lastPage: number | null; collected: number }
+  | { type: 'listed'; listed: number; skippedExisting: number; targeted: number; seenUpdated: number }
+  | { type: 'detail'; completed: number; total: number; saved: number; failed: number; carId: string; ok: boolean };
 export interface CollectDeps {
   crawlList: (searchQuery: string, options: CrawlListOptions) => Promise<SearchResult[]>;
   crawlDetails: (items: SearchResult[], opts: CrawlDetailsOptions) => Promise<CrawlDetailsResult>;
   log: (line: string) => void;
   now?: () => Date;
+  onProgress?: (e: CollectProgressEvent) => void;
 }
 export const defaultCollectDeps: CollectDeps = { crawlList, crawlDetails, log: (l) => console.log(l) };
 export type CollectStatus = 'completed' | 'blocked' | 'interrupted';
@@ -150,20 +163,24 @@ export async function runCollect(
     throw new Error(`--prune은 ${bad.join(', ')} 와 함께 쓸 수 없습니다 — 목록 전체를 수집하는 실행에서만 삭제할 수 있습니다`);
   }
   const log = deps.log;
+  const emit = deps.onProgress ?? ((): void => {});
   const nowFn = deps.now ?? ((): Date => new Date());
-  const replaceYearly = isYearlyFetchEnabled();
+  const replaceYearly = opts.fetchYearly ?? isYearlyFetchEnabled();
+  const fetchMarket = opts.fetchMarket ?? isMarketFetchEnabled();
 
   log(`🔍 검색 조건: ${searchQuery}`);
-  log(`ℹ 동급매물 시세(ENCAR_FETCH_MARKET): ${isMarketFetchEnabled() ? 'ON' : 'OFF'} | 연식별 시세(ENCAR_FETCH_YEARLY): ${replaceYearly ? 'ON' : 'OFF'}`);
+  log(`ℹ 동급매물 시세(ENCAR_FETCH_MARKET): ${fetchMarket ? 'ON' : 'OFF'} | 연식별 시세(ENCAR_FETCH_YEARLY): ${replaceYearly ? 'ON' : 'OFF'}`);
   if (!replaceYearly) {
     log(`  가격 점수 기준: 로컬 DB 동일 모델·트림·연식 평균가(표본 3대 이상, 없으면 중립 50%). 엔카 연식별 시세를 쓰려면 ENCAR_FETCH_YEARLY=1 (매물당 검색 API 호출 증가)`);
   }
   log('');
   log('📄 페이지 수집 중...');
+  emit({ type: 'phase', phase: 'list' });
 
   const startPage = opts.startPage ?? 1;
   if (startPage > 1) log(`ℹ 시작 페이지: ${startPage} (--start-page)`);
-  const listed = await deps.crawlList(searchQuery, { startPage, maxPages: opts.maxPages, log: (l) => log(`  ${l}`) });
+  const listed = await deps.crawlList(searchQuery, { startPage, maxPages: opts.maxPages, log: (l) => log(`  ${l}`), shouldStop,
+    onPage: (e) => emit({ type: 'listPage', ...e }) });
 
   const seenUpdated = markVehiclesSeen(listed.map((r) => r.carId), nowFn().toISOString());
   if (seenUpdated > 0) log(`  목록 확인: DB에 있던 ${seenUpdated}대의 마지막 확인 시각 갱신`);
@@ -197,6 +214,7 @@ export async function runCollect(
   }
 
   report.targeted = targets.length;
+  emit({ type: 'listed', listed: report.listed, skippedExisting: report.skippedExisting, targeted: report.targeted, seenUpdated });
 
   if (shouldStop()) {
     report.status = 'interrupted';
@@ -208,6 +226,10 @@ export async function runCollect(
     log('');
     log(`📥 상세 데이터 수집 중... (${targets.length}대, 동시 ${DETAIL_CONCURRENCY}건)`);
     log(`   ※ "(잠정)" 점수는 수집 도중의 로컬 시세 기준 임시값입니다. 수집 종료 후 DB 전체를 재채점합니다.`);
+    emit({ type: 'phase', phase: 'detail' });
+    const emitDetail = (e: DetailResultEvent, ok: boolean): void => emit({
+      type: 'detail', completed: e.completed, total: e.total, saved: report.saved.length, failed: report.failed.length, carId: e.carId, ok,
+    });
 
     const onResult = (e: DetailResultEvent): void => {
       const prefix = `  [${e.completed}/${e.total}]`;
@@ -215,6 +237,7 @@ export async function runCollect(
         const msg = e.error?.message ?? '알 수 없는 오류';
         report.failed.push({ carId: e.carId, error: msg });
         log(`${prefix} ${e.carId} → ${e.error instanceof BlockedError ? '⛔ 차단됨' : '⚠️ ' + msg} (스킵)`);
+        emitDetail(e, false);
         return;
       }
       try {
@@ -222,15 +245,17 @@ export async function runCollect(
         report.saved.push(e.carId);
         const v = e.bundle.vehicle;
         log(`${prefix} ${vehicleLabel(v)} ${v.year > 0 ? fmtYY(v.year) + '년식' : '연식미상'} ${fmtManwon(v.price)} → ${score.grade}등급 ${score.total}점(잠정) ✅`);
+        emitDetail(e, true);
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         report.failed.push({ carId: e.carId, error: `DB 저장 실패: ${msg}` });
         log(`${prefix} ${e.carId} → ⚠️ DB 저장 실패: ${msg} (스킵)`);
+        emitDetail(e, false);
       }
     };
 
     try {
-      await deps.crawlDetails(targets, { searchQuery, onResult, log: (_l: string) => {}, shouldStop });
+      await deps.crawlDetails(targets, { searchQuery, onResult, log: (_l: string) => {}, shouldStop, fetchMarket, fetchYearly: replaceYearly });
       if (shouldStop()) report.status = 'interrupted';
     } catch (err) {
       if (err instanceof BlockedError) report.status = 'blocked';
@@ -240,6 +265,7 @@ export async function runCollect(
 
   if (fullList) {
     if (report.status === 'completed') {
+      emit({ type: 'phase', phase: 'prune' });
       report.prune = await evaluatePrune(searchQuery, listed, opts.prune === true, deps, shouldStop);
     } else if (opts.prune === true) {
       report.prune = skippedPrune(report.status === 'blocked'
@@ -251,6 +277,7 @@ export async function runCollect(
   if (report.saved.length > 0 || (report.prune?.deleted.length ?? 0) > 0) {
     log('');
     log('🔄 DB 전체 재채점 중...');
+    emit({ type: 'phase', phase: 'rescore' });
     report.rescored = rescoreAll(DEFAULT_WEIGHTS, nowFn());
   }
 
@@ -272,15 +299,33 @@ function staleLine(r: CollectReport): string | null {
     : null;
 }
 
-export function printCollectReport(r: CollectReport, log: (line: string) => void = console.log): void {
-  const done = r.saved.length + r.failed.length;
-  const pending = r.targeted - done;
+/** 이번에 저장된 매물의 (재채점 후) 등급 분포·평균. printCollectReport와 GUI 결과 요약이 함께 사용 */
+export interface CollectSavedStats {
+  pending: number;                          // 상세 수집 대상 중 미처리
+  savedFound: number;                       // 저장 목록 중 지금 DB에 있는 대수 (prune과 겹치면 줄 수 있음)
+  gradeDistribution: Record<Grade, number>;
+  avgScore: number | null;
+  avgPrice: number | null;
+}
+export function collectSavedStats(r: CollectReport): CollectSavedStats {
   const vehicles = r.saved.map(findVehicleById).filter((v): v is typeof v & {} => v !== null);
   const dist = Object.fromEntries(GRADES.map((g) => [g, 0])) as Record<Grade, number>;
   for (const v of vehicles) {
     if (v.scoreGrade) dist[v.scoreGrade]++;
   }
   const scored = vehicles.filter((v) => v.scoreTotal != null);
+  return {
+    pending: r.targeted - (r.saved.length + r.failed.length),
+    savedFound: vehicles.length,
+    gradeDistribution: dist,
+    avgScore: scored.length ? scored.reduce((sum, v) => sum + (v.scoreTotal ?? 0), 0) / scored.length : null,
+    avgPrice: vehicles.length ? vehicles.reduce((sum, v) => sum + v.price, 0) / vehicles.length : null,
+  };
+}
+
+export function printCollectReport(r: CollectReport, log: (line: string) => void = console.log): void {
+  const st = collectSavedStats(r);
+  const pending = st.pending;
 
   log('');
   const pruneLine = pruneSummaryLine(r.prune);
@@ -301,11 +346,9 @@ export function printCollectReport(r: CollectReport, log: (line: string) => void
     log(`⏹ 사용자 요청으로 중단: ${r.saved.length}/${r.targeted}대 저장, ${r.failed.length}대 실패, ${pending}대 미처리`);
   }
 
-  if (vehicles.length > 0) {
-    log(`   ${fmtGradeDistribution(dist)}`);
-    const avgScore = scored.length ? (scored.reduce((sum, v) => sum + (v.scoreTotal ?? 0), 0) / scored.length).toFixed(1) : '-';
-    const avgPrice = vehicles.length ? (vehicles.reduce((sum, v) => sum + v.price, 0) / vehicles.length) : 0;
-    log(`   평균 점수: ${avgScore}점 | 평균 가격: ${fmtManwon(avgPrice)}`);
+  if (st.savedFound > 0) {
+    log(`   ${fmtGradeDistribution(st.gradeDistribution)}`);
+    log(`   평균 점수: ${st.avgScore === null ? '-' : st.avgScore.toFixed(1)}점 | 평균 가격: ${fmtManwon(st.avgPrice ?? 0)}`);
   }
 
   if (r.rescored) {
@@ -332,12 +375,18 @@ export function printCollectReport(r: CollectReport, log: (line: string) => void
 }
 
 export async function collectCommand(url: string, opts: CollectOptions): Promise<number> {
+  const lock = tryAcquireJobLock('collect');
+  if (!lock.ok) {
+    console.error(`⛔ ${lockHeldMessage(lock.holder)}`);
+    return 1;
+  }
   let stopRequested = false;
 
   const onSigint = (): void => {
     if (stopRequested) {
       console.error('\n⛔ 강제 종료합니다. 저장된 매물의 점수는 잠정치입니다 — 나중에 npx ts-node src/scoring/rescore.ts 로 재채점하세요.');
       closeDb();
+      lock.release();
       process.exit(130);
     }
     stopRequested = true;
@@ -363,5 +412,6 @@ export async function collectCommand(url: string, opts: CollectOptions): Promise
     return 1;
   } finally {
     process.off('SIGINT', onSigint);
+    lock.release();
   }
 }

@@ -6,6 +6,7 @@ import { DB_PATH, getDb, closeDb, setDbReadonly } from '../db/connection';
 import { getStaleDays } from '../db/repository';
 import { resolveCompareSettings } from '../services/compare';
 import { buildApp, DEFAULT_WEB_ROOT } from './app';
+import { createJobManager } from './jobs';
 
 export const DEFAULT_GUI_PORT = 5174;
 
@@ -47,7 +48,8 @@ async function main(): Promise<void> {
   setDbReadonly(true);
   getDb();
 
-  const app = buildApp({ webRoot: o.dev ? null : DEFAULT_WEB_ROOT });
+  const jobs = createJobManager();
+  const app = buildApp({ webRoot: o.dev ? null : DEFAULT_WEB_ROOT, jobs });
   try {
     await app.listen({ host: '127.0.0.1', port });
   } catch (err) {
@@ -60,14 +62,19 @@ async function main(): Promise<void> {
   }
   const url = `http://127.0.0.1:${port}/`;
   console.log(`🚗 used-car GUI: ${url}${o.dev ? ' (API 전용 — 화면은 Vite http://127.0.0.1:5173/)' : ''}`);
-  console.log(`   DB: ${DB_PATH} (읽기 전용) | 종료: Ctrl+C`);
+  console.log(`   DB: ${DB_PATH} (조회는 읽기 전용, 수집·정리 작업 중에만 쓰기) | 종료: Ctrl+C`);
   if (o.open && !o.dev) openBrowser(url);
 
   let closing = false;
   const shutdown = (): void => {
-    if (closing) process.exit(130);
+    if (closing) {
+      console.error('⛔ 강제 종료합니다. 수집 중이었다면 저장된 매물의 점수는 잠정치입니다 — 다음 수집 때 재채점됩니다.');
+      jobs.forceRelease();
+      process.exit(130);
+    }
     closing = true;
-    void app.close().finally(() => { closeDb(); process.exit(0); });
+    if (jobs.isRunning()) console.error('⏹ 실행 중인 작업에 중단을 요청했습니다 — 진행 중인 매물까지 저장·재채점 후 종료합니다. (즉시 강제 종료: Ctrl+C 한 번 더)');
+    void jobs.shutdown().finally(() => app.close()).finally(() => { closeDb(); process.exit(0); });
   };
   process.on('SIGINT', shutdown);
   process.on('SIGTERM', shutdown);

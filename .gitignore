@@ -9,3 +9,4 @@ web/dist/
 
 PLAN.md
 PRD.md
+data/*.lock

@@ -6,8 +6,14 @@ import { DashboardPage } from './pages/DashboardPage';
 import { VehicleListPage } from './pages/VehicleListPage';
 import { VehicleDetailPage } from './pages/VehicleDetailPage';
 import { ComparePage } from './pages/ComparePage';
+import { CollectPage } from './pages/CollectPage';
+import { PurgePage } from './pages/PurgePage';
+import { SettingsPage } from './pages/SettingsPage';
 
-const TITLE: Record<Route['name'], string> = { dashboard: '대시보드', vehicles: '매물 목록', vehicle: '매물 상세', compare: '가격 비교', notFound: '없는 화면' };
+const TITLE: Record<Route['name'], string> = {
+  dashboard: '대시보드', vehicles: '매물 목록', vehicle: '매물 상세', compare: '가격 비교',
+  collect: '수집', purge: '정리', settings: '설정', notFound: '없는 화면',
+};
 
 function NavTab({ to, active, children }: { to: string; active: boolean; children: ReactNode }) {
   return <Link to={to} className={`tab${active ? ' is-active' : ''}`} aria-current={active ? 'page' : undefined}>{children}</Link>;
@@ -23,6 +29,9 @@ export function App() {
     case 'vehicles': page = <VehicleListPage />; break;
     case 'vehicle': page = <VehicleDetailPage key={route.carId} carId={route.carId} />; break;
     case 'compare': page = <ComparePage />; break;
+    case 'collect': page = <CollectPage />; break;
+    case 'purge': page = <PurgePage />; break;
+    case 'settings': page = <SettingsPage />; break;
     default: page = <Empty title="없는 화면입니다"><Link to="/">대시보드로</Link></Empty>;
   }
   return (
@@ -34,6 +43,9 @@ export function App() {
             <NavTab to="/" active={route.name === 'dashboard'}>대시보드</NavTab>
             <NavTab to="/vehicles" active={route.name === 'vehicles' || route.name === 'vehicle'}>매물 목록</NavTab>
             <NavTab to="/compare" active={route.name === 'compare'}>가격 비교</NavTab>
+            <NavTab to="/collect" active={route.name === 'collect'}>수집</NavTab>
+            <NavTab to="/purge" active={route.name === 'purge'}>정리</NavTab>
+            <NavTab to="/settings" active={route.name === 'settings'}>설정</NavTab>
           </nav>
           <div className="header-right"><ThemeToggle /></div>
         </div>

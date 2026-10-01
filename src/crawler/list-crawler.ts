@@ -11,6 +11,8 @@ export interface CrawlListOptions {
   startPage?: number;              // 시작 페이지 (1부터, 기본 1)
   maxPages?: number;               // startPage부터 수집할 최대 페이지 수 (기본 Infinity)
   log?: (line: string) => void;    // 기본 console.log
+  shouldStop?: () => boolean;      // true면 다음 페이지 요청 전에 멈춤 (지금까지 모은 목록 반환)
+  onPage?: (e: { page: number; lastPage: number | null; collected: number }) => void; // 페이지 처리 후 (GUI 진행 표시용)
 }
 
 function str(v: unknown): string | null {
@@ -44,6 +46,12 @@ export function isDuplication(r: SearchResult): boolean {
   return r.serviceCopyCar === 'DUPLICATION';
 }
 
+/** 검색 결과 총 대수만 조회 (목록 API 1회, 렌트·리스·중복매물 제외 전). GUI 수집 화면의 사전 확인용 */
+export async function fetchSearchCount(searchQuery: string): Promise<number | null> {
+  const data = await fetchJson<RawSearchResponse>(buildSearchApiUrl(searchQuery, 0, 1));
+  return typeof data.Count === 'number' ? data.Count : null;
+}
+
 export async function crawlList(searchQuery: string, options: CrawlListOptions = {}): Promise<SearchResult[]> {
   const startPage = options.startPage ?? 1;
   if (!Number.isInteger(startPage) || startPage < 1) throw new Error(`startPage는 1 이상의 정수여야 합니다: ${startPage}`);
@@ -56,6 +64,10 @@ export async function crawlList(searchQuery: string, options: CrawlListOptions =
   let excludedSeen = 0;
 
   for (let page = startPage; ; page++) {
+    if (options.shouldStop?.() ?? false) {
+      log(`[중단] 사용자 요청 (${page - 1}페이지까지 수집)`);
+      break;
+    }
     if (page - startPage >= maxPages) {
       log(`[중단] maxPages(${maxPages}) 도달`);
       break;
@@ -119,6 +131,8 @@ export async function crawlList(searchQuery: string, options: CrawlListOptions =
     }
 
     log(`[Page ${page}] ${items.length}대 수집 → 유효 ${kept}대 (렌트/리스 ${rl}, 중복매물 ${dup}, 중복ID ${sn} 제외)`);
+    const lastByCount = total === null ? null : Math.max(startPage, Math.ceil(total / PAGE_SIZE));
+    options.onPage?.({ page, lastPage: lastByCount === null ? null : Math.min(lastByCount, startPage + maxPages - 1), collected: out.length });
     await sleep(500 + Math.random() * 1000);
 
     if (items.length < PAGE_SIZE || (total !== null && offset + PAGE_SIZE >= total)) {

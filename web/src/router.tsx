@@ -1,4 +1,4 @@
-// 최소 라우터 (History API). 화면 4개뿐이라 라이브러리 없이 구현
+// 최소 라우터 (History API). 화면이 몇 개뿐이라 라이브러리 없이 구현
 import { useMemo, useSyncExternalStore, type AnchorHTMLAttributes, type MouseEvent, type ReactNode } from 'react';
 
 const NAV_EVENT = 'used-car:navigate';
@@ -53,6 +53,9 @@ export type Route =
   | { name: 'vehicles' }
   | { name: 'vehicle'; carId: string }
   | { name: 'compare' }
+  | { name: 'collect' }
+  | { name: 'purge' }
+  | { name: 'settings' }
   | { name: 'notFound' };
 
 export function matchRoute(pathname: string): Route {
@@ -60,6 +63,9 @@ export function matchRoute(pathname: string): Route {
   if (p === '/') return { name: 'dashboard' };
   if (p === '/vehicles') return { name: 'vehicles' };
   if (p === '/compare') return { name: 'compare' };
+  if (p === '/collect') return { name: 'collect' };
+  if (p === '/purge') return { name: 'purge' };
+  if (p === '/settings') return { name: 'settings' };
   const m = /^\/vehicles\/([^/]+)$/.exec(p);
   if (m) return { name: 'vehicle', carId: decodeURIComponent(m[1]) };
   return { name: 'notFound' };

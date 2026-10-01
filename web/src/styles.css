@@ -208,3 +208,30 @@ td.indent { padding-left: var(--space-5); color: var(--text-muted); }
 .notice-error { background: var(--bad-bg); color: var(--text); border-color: var(--bad); }
 .notice-error .btn { margin-top: var(--space-2); }
 .detail-head > * + * { margin-top: var(--space-2); }
+
+/* ───── 2단계: 수집·정리·설정 ───── */
+.btn-danger { background: var(--bad); border-color: var(--bad); color: #fff; font-weight: 600; }
+.btn-danger:hover:not(:disabled) { background: var(--bad); filter: brightness(1.08); }
+.progress-wrap { display: flex; align-items: center; gap: var(--space-3); }
+.progress { flex: 1; height: 10px; appearance: none; -webkit-appearance: none; border: 0; border-radius: 5px; background: var(--surface-2); overflow: hidden; }
+.progress::-webkit-progress-bar { background: var(--surface-2); border-radius: 5px; }
+.progress::-webkit-progress-value { background: var(--accent); border-radius: 5px; }
+.progress::-moz-progress-bar { background: var(--accent); border-radius: 5px; }
+.progress:indeterminate { background: linear-gradient(90deg, var(--surface-2) 0%, var(--accent-soft) 50%, var(--surface-2) 100%); background-size: 200% 100%; animation: progress-slide 1.5s linear infinite; }
+.progress:indeterminate::-webkit-progress-bar { background: transparent; }
+@keyframes progress-slide { from { background-position: 100% 0; } to { background-position: -100% 0; } }
+@media (prefers-reduced-motion: reduce) { .progress:indeterminate { animation: none; } }
+.log-panel { margin: 0; height: 320px; overflow: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--radius); padding: var(--space-3); font-family: var(--mono); font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; }
+.log-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-3); margin-bottom: var(--space-2); }
+.status-line { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; }
+.dialog { border: 1px solid var(--border-strong); border-radius: var(--radius); background: var(--surface); color: var(--text); padding: var(--space-5); max-width: 480px; width: calc(100% - 32px); }
+.dialog::backdrop { background: rgba(0, 0, 0, 0.45); }
+.dialog h2 { font-size: 16px; margin-bottom: var(--space-3); }
+.dialog .form-actions { justify-content: flex-end; margin-top: var(--space-4); }
+.setting-row { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: var(--space-4); padding: var(--space-3) 0; border-bottom: 1px solid var(--border); }
+.setting-row:last-child { border-bottom: none; }
+.setting-row code { overflow-wrap: anywhere; }
+.setting-row .input { width: 100%; max-width: 320px; }
+.setting-meta { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; margin-top: var(--space-1); }
+@media (max-width: 700px) { .setting-row { grid-template-columns: minmax(0, 1fr); gap: var(--space-2); } }
+.field-hint.is-error { color: var(--bad); }
