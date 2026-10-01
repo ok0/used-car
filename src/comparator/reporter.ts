@@ -26,8 +26,8 @@ function fmtMatchedNames(pkgName: string, names: readonly string[]): string {
   const shown = names.slice(0, 3).join(', ');
   return ` — 엔카 표기: ${shown}${names.length > 3 ? ` 외 ${names.length - 3}개` : ''}`;
 }
-function signed(n: number, digits = 1): string { return `${n > 0 ? '+' : ''}${n.toFixed(digits)}`; }
-function signedInt(n: number): string { return `${n > 0 ? '+' : n < 0 ? '-' : ''}${fmtNum(Math.abs(n))}`; }
+export function signed(n: number, digits = 1): string { return `${n > 0 ? '+' : ''}${n.toFixed(digits)}`; }
+export function signedInt(n: number): string { return `${n > 0 ? '+' : n < 0 ? '-' : ''}${fmtNum(Math.abs(n))}`; }
 function yn(b: boolean | null): string { return b === null ? '?' : b ? '있음' : '없음'; }
 
 export function inputTitle(i: CompareInput): string {
@@ -55,22 +55,31 @@ export function buildVerdictLines(r: CompareResult): string[] {
   }
   lines.push(`상품화 플랫폼 프리미엄 허용치: ${j.allowedPremium}% (기본 ${j.basePremium}% ${j.qualityAdjustment >= 0 ? '+' : ''}${j.qualityAdjustment}%p, 범위 0~10%)`);
   if (j.verdict === 'cheap') {
-    lines.push(`${j.specAdjustment !== 0 ? '사양 보정 후 ' : ''}동급 평균보다 ${Math.abs(d).toFixed(1)}% 저렴하며 치명적 감점 요인이 없습니다.`);
-  } else if (j.verdict === 'fair' && j.criticalReasons.length > 0 && d <= -5) {
+    lines.push(`기대 가격(엔카 시세 + 허용 프리미엄 ${j.allowedPremium}%)보다 ${Math.abs(j.excessOverAllowance).toFixed(1)}% 낮으며 치명적 감점 요인이 없습니다.`);
+  } else if (j.verdict === 'fair' && j.criticalReasons.length > 0 && j.excessOverAllowance <= -5) {
     lines.push(`가격은 낮지만 ${j.criticalReasons.join(', ')} 요인이 있어 저렴하다고 보기 어렵습니다.`);
-  } else if (j.verdict === 'fair' && d > 0) {
-    lines.push(`상품화 플랫폼 프리미엄 허용치(${j.allowedPremium}%) 범위 내입니다.`);
+  } else if (j.verdict === 'fair' && j.excessOverAllowance > 0) {
+    lines.push(`상품화 플랫폼 프리미엄 허용치(${j.allowedPremium}%)를 ${j.excessOverAllowance.toFixed(1)}%p 넘지만 적정 범위(허용치 ±5%) 안입니다.`);
   } else if (j.verdict === 'fair') {
     lines.push('동급 시세 수준입니다.');
   } else {
-    lines.push(`프리미엄 허용치(${j.allowedPremium}%)를 ${j.excessOverAllowance.toFixed(1)}%p 초과합니다.`);
+    lines.push(`허용 범위(허용치 ±5%)를 ${(j.excessOverAllowance - 5).toFixed(1)}%p 초과합니다.`);
   }
+  const g = r.diagnostics;
+  if (g.peerLogSdPercent !== null && g.meanStdErrPercent !== null) {
+    lines.push(`참고(측정 편차): 동급 ${r.sampleCount}대 가격 표준편차 ±${g.peerLogSdPercent.toFixed(1)}%, 동급 평균의 표준오차 ±${g.meanStdErrPercent.toFixed(1)}%`);
+  }
+  if (j.compositionAdjustment !== 0) {
+    lines.push(`연식·주행·렌트 구성 보정 ${signed(-j.compositionAdjustment)}% → 보정 후 가격 차이 ${signed(d)}%`);
+  }
+  lines.push(`참고(구성 차이): 동급 대비 차령 ${signed(g.ageGapMonths, 0)}개월 · 주행 ${signedInt(Math.round(g.mileageGapKm))}km · 동급 렌트 비율 ${fmtPct(g.peerRentalRatio)} → 이 차이만으로 예상되는 가격 차이 ${signed(g.compositionPercent)}% (판정에 반영)`);
   return lines;
 }
 
 export function buildRecommendations(r: CompareResult): string[] {
   const recs: string[] = [];
   const i = r.input;
+  if (Math.abs(r.diagnostics.compositionPercent) >= 3) recs.push(`동급과 연식·주행거리·렌트 구성 차이로 약 ${signed(r.diagnostics.compositionPercent)}%의 가격 차이가 예상됩니다 — 동급 평균 대비 %를 해석할 때 고려 권장`);
   if (r.option.specDiffPercent === null) recs.push('옵션 포함 신차가 비교 불가 — 옵션·트림 구성을 직접 비교 권장');
   if (r.isLowSample) recs.push(`동급 표본이 ${r.sampleCount}대로 적습니다 — 같은 모델의 엔카 검색 URL로 collect를 더 실행한 뒤 재비교 권장`);
   if (r.criteria.modelMatchLevel === 'loose' || (r.criteria.trim !== null && !r.criteria.trimApplied)) {

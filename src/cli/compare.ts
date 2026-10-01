@@ -5,6 +5,7 @@ import {
   CompareError, URL_SITE_LABEL, resolveCompareSettings, resolveUrlSite, fetchSiteInput, analyzeInput,
   applyOverrides, buildManualInput, type CompareCliOptions, type CompareSettings, type FetchedInput, type UrlSite, type CompareAnalysis,
 } from '../services/compare';
+import { PLATFORM_PREMIUM_ENV } from '../comparator/analyzer';
 import type { CompareInput } from '../types';
 
 // 기존 import 경로 호환 (함수 본체는 services/compare.ts로 이동)
@@ -56,8 +57,10 @@ export async function compareCommand(opts: CompareCliOptions, now: Date = new Da
     input = buildManualInput(opts);
   }
 
-  if (input.platform === 'hyundai_certified' && (process.env.COMPARE_PREMIUM_HYUNDAI_CERTIFIED ?? '').trim() !== '') {
-    console.log(`ℹ 현대 인증중고차 기본 프리미엄(환경변수): ${settings.hyundaiPremium}%`);
+  const premiumEnv = PLATFORM_PREMIUM_ENV[input.platform];
+  if ((process.env[premiumEnv] ?? '').trim() !== '') {
+    const label = { heydealer: '헤이딜러', kcar: '케이카', hyundai_certified: '현대 인증중고차' }[input.platform];
+    console.log(`ℹ ${label} 기본 프리미엄(환경변수): ${settings.premiums[input.platform]}%`);
   }
 
   console.log();

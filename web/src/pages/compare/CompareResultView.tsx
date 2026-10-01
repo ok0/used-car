@@ -57,14 +57,17 @@ export function CompareResultView({ r }: { r: CompareResponse }) {
           <table className="table compact"><tbody>
             <tr><td>동급 평균 대비 가격 차이</td><td className="num">{fmtSigned(j.diffPercent)}%</td></tr>
             <tr><td>옵션·사양 보정 (기대 시세)</td><td className="num">{j.specAdjustment === 0 ? '없음' : `${fmtSigned(j.specAdjustment)}%`}</td></tr>
+            <tr><td>연식·주행·렌트 구성 보정</td><td className="num">{j.compositionAdjustment === 0 ? '없음' : `${fmtSigned(-j.compositionAdjustment)}%`}</td></tr>
             <tr><td>보정 후 가격 차이</td><td className="num"><strong>{fmtSigned(j.adjustedDiffPercent)}%</strong></td></tr>
             <tr><td>기본 플랫폼 프리미엄</td><td className="num">{j.basePremium}%</td></tr>
             {j.factors.map((f) => <tr key={f.axis + f.reason}><td className="indent">품질 보정: {f.reason}</td><td className="num">{f.points > 0 ? '+' : ''}{f.points}%p</td></tr>)}
             <tr><td>허용 프리미엄 (0~10%)</td><td className="num">{j.allowedPremium}%</td></tr>
             <tr><td>허용치 초과</td><td className="num">{fmtSigned(j.excessOverAllowance)}%p</td></tr>
             <tr><td>치명 요인</td><td>{j.criticalReasons.length > 0 ? j.criticalReasons.join(', ') : '없음'}</td></tr>
+            <tr><td>참고: 구성 차이 예상</td><td className="num">{fmtSigned(x.diagnostics.compositionPercent)}%</td></tr>
+            <tr><td>참고: 동급 평균 표준오차</td><td className="num">{x.diagnostics.meanStdErrPercent === null ? '-' : `±${x.diagnostics.meanStdErrPercent.toFixed(1)}%`}</td></tr>
           </tbody></table>
-          <p className="muted small">저렴함: 보정 후 −5% 이하이고 치명 요인 없음 · 적정가: 허용치 이내 · 다소 비쌈: 초과 10%p 미만 · 비쌈: 초과 10%p 이상</p>
+          <p className="muted small">저렴함: 허용치보다 5% 이상 낮고 치명 요인 없음 · 적정가: 허용치 ±5% · 다소 비쌈: 허용치 +5~15% · 비쌈: 허용치 +15% 이상</p>
         </section>
         <section className="card">
           <h2 className="card-title">권장 사항</h2>

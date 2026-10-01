@@ -1,18 +1,27 @@
 import { scoreOwnerHistory } from '../scoring/owner';
 import type {
   AccidentComparison, AccidentSeverity, ComparePlatform, CompareInput, CompareResult, CompareVerdict, InspectionComparison, InputOptionPackage,
-  MarketMatch, MarketStats, MileageComparison, OptionComparison, OwnerComparison, PackagePeerStats, PriceBucket, PriceComparison, QualityAxis,
+  MarketMatch, MarketStats, MileageComparison, OptionComparison, OwnerComparison, PackagePeerStats, PriceBucket, PriceComparison, PriceDiagnostics, QualityAxis,
   QualityFactor, RentalComparison, VehicleData, VerdictDetail,
 } from '../types';
 
 export const BASE_PLATFORM_PREMIUM = 5;
 export const MAX_PLATFORM_PREMIUM = 10;
-export const CHEAP_THRESHOLD = -5;
+export const FAIR_BAND = 5;
 export const EXPENSIVE_EXCESS = 10;
+export const SPEC_WEIGHT = 0.5;
 export const LOW_ANNUAL_KM = 5000;
 export const HIGH_ANNUAL_KM = 25000;
 export const SPEC_DEADBAND = 2;
 export const MIN_SPEC_PEERS = 3;
+
+/** 2026-09-30 DB(엔카 1,124대: 더 뉴 싼타페·쏘렌토 4세대·투싼 NX4) 트림 고정효과 log(가격) 회귀 추정치(%). 진단용 */
+export const AGE_EFFECT_PER_YEAR = -3.8;
+export const MILEAGE_EFFECT_PER_10K = -2.3;
+export const RENTAL_EFFECT = -2.1;
+export const PLATFORM_PREMIUM_ENV: Record<ComparePlatform, string> = {
+  heydealer: 'COMPARE_PREMIUM_HEYDEALER', kcar: 'COMPARE_PREMIUM_KCAR', hyundai_certified: 'COMPARE_PREMIUM_HYUNDAI_CERTIFIED',
+};
 
 export function specMaxAdjust(env: NodeJS.ProcessEnv = process.env): number {
   const val = (env['COMPARE_SPEC_MAX_ADJUST'] ?? '').trim();
@@ -25,11 +34,11 @@ export function specMaxAdjust(env: NodeJS.ProcessEnv = process.env): number {
 }
 
 export function platformBasePremium(platform: ComparePlatform, env: NodeJS.ProcessEnv = process.env): number {
-  if (platform !== 'hyundai_certified') return BASE_PLATFORM_PREMIUM;
-  const raw = (env['COMPARE_PREMIUM_HYUNDAI_CERTIFIED'] ?? '').trim();
+  const name = PLATFORM_PREMIUM_ENV[platform];
+  const raw = (env[name] ?? '').trim();
   if (raw === '') return BASE_PLATFORM_PREMIUM;
   const n = Number(raw);
-  if (!Number.isInteger(n) || n < 0 || n > MAX_PLATFORM_PREMIUM) throw new Error(`COMPARE_PREMIUM_HYUNDAI_CERTIFIED는 0~${MAX_PLATFORM_PREMIUM} 정수여야 합니다: ${raw}`);
+  if (!Number.isInteger(n) || n < 0 || n > MAX_PLATFORM_PREMIUM) throw new Error(`${name}는 0~${MAX_PLATFORM_PREMIUM} 정수여야 합니다: ${raw}`);
   return n;
 }
 
@@ -275,7 +284,8 @@ export function comparePackagePeers(
 
 export function computeSpecAdjustment(specDiffPercent: number | null, maxAdjust: number = specMaxAdjust()): number {
   if (specDiffPercent === null || Math.abs(specDiffPercent) < SPEC_DEADBAND) return 0;
-  return Math.max(-maxAdjust, Math.min(maxAdjust, Math.round(specDiffPercent * 10) / 10));
+  const weighted = specDiffPercent * SPEC_WEIGHT;
+  return Math.max(-maxAdjust, Math.min(maxAdjust, Math.round(weighted * 10) / 10));
 }
 
 function compareOptions(
@@ -318,36 +328,28 @@ function compareRental(input: CompareInput, peers: VehicleData[]): RentalCompari
   };
 }
 
-export function buildQualityFactors(input: CompareInput, mileage: MileageComparison, accident: AccidentComparison): QualityFactor[] {
+export function buildQualityFactors(input: CompareInput, _mileage: MileageComparison, accident: AccidentComparison): QualityFactor[] {
   const factors: QualityFactor[] = [];
   const add = (axis: QualityAxis, points: number, reason: string): void => {
     if (points !== 0) factors.push({ axis, points, reason });
   };
-  if (accident.severity === 'none') add('accident', 2, '무사고');
+  if (accident.severity === 'none') add('accident', 1, '무사고');
   else if (accident.severity === 'moderate') add('accident', -3, '중간 규모 사고');
   else if (accident.severity === 'severe') add('accident', -6, '대형 사고');
   const i = input.inspection;
   if (i !== null) {
     if (i.isClean === true) add('inspection', 1, '성능점검 무사고');
     else if (i.hasWelding === true) add('inspection', -2, '판금 이력');
-    else if (i.hasReplacement === true) add('inspection', -1, '교환 이력');
+    else if (i.hasReplacement === true) add('inspection', -2, '교환 이력');
   }
-  const o = input.ownerChangeCount;
-  if (o === 0) add('owner', 1, '1인 소유(변경 0회)');
-  else if (o !== null && o >= 3) add('owner', -2, `소유주 변경 ${o}회`);
-  if (mileage.peerRatio !== null) {
-    if (mileage.peerRatio <= 0.8) add('mileage', 2, '동급 대비 저주행');
-    else if (mileage.peerRatio >= 1.2) add('mileage', -2, '동급 대비 고주행');
-  }
-  if (input.hasRentalHistory === true) add('rental', -5, '렌트 이력');
   return factors;
 }
 
 export function decideVerdict(
   diffPercent: number, factors: QualityFactor[], input: CompareInput, severity: AccidentSeverity | null, specAdjustment: number = 0,
-  basePremium: number = BASE_PLATFORM_PREMIUM,
+  basePremium: number = BASE_PLATFORM_PREMIUM, compositionAdjustment: number = 0,
 ): VerdictDetail {
-  const adjusted = diffPercent - specAdjustment;
+  const adjusted = diffPercent - specAdjustment - compositionAdjustment;
   const qualityAdjustment = factors.reduce((s, f) => s + f.points, 0);
   const allowedPremium = Math.min(MAX_PLATFORM_PREMIUM, Math.max(0, basePremium + qualityAdjustment));
   const excess = adjusted - allowedPremium;
@@ -356,9 +358,9 @@ export function decideVerdict(
   if (input.hasRentalHistory === true) criticalReasons.push('렌트 이력');
   if (input.ownerChangeCount !== null && input.ownerChangeCount >= 4) criticalReasons.push('소유주 변경 4회 이상');
   let verdict: CompareVerdict;
-  if (adjusted <= CHEAP_THRESHOLD) verdict = criticalReasons.length === 0 ? 'cheap' : 'fair';
-  else if (excess <= 0) verdict = 'fair';
-  else if (excess < EXPENSIVE_EXCESS) verdict = 'slightly_expensive';
+  if (excess <= -FAIR_BAND) verdict = criticalReasons.length === 0 ? 'cheap' : 'fair';
+  else if (excess <= FAIR_BAND) verdict = 'fair';
+  else if (excess < FAIR_BAND + EXPENSIVE_EXCESS) verdict = 'slightly_expensive';
   else verdict = 'expensive';
   return {
     verdict,
@@ -369,12 +371,37 @@ export function decideVerdict(
     qualityAdjustment,
     allowedPremium,
     excessOverAllowance: excess,
+    compositionAdjustment,
     factors,
     criticalReasons,
   };
 }
 
-/** 요청별 판정 설정. 생략한 값은 환경변수(COMPARE_SPEC_MAX_ADJUST / COMPARE_PREMIUM_HYUNDAI_CERTIFIED) 기준 */
+export function computePriceDiagnostics(input: CompareInput, peers: VehicleData[], now: Date): PriceDiagnostics {
+  const n = peers.length;
+  const inputAgeMonths = calcAgeMonths(input.year, input.month, now);
+  const peerMeanAgeMonths = peers.reduce((s, v) => s + calcAgeMonths(v.year, v.month, now), 0) / n;
+  const peerMeanMileage = peers.reduce((s, v) => s + v.mileage, 0) / n;
+  const ageGapMonths = inputAgeMonths - peerMeanAgeMonths;
+  const mileageGapKm = input.mileage - peerMeanMileage;
+  const known = peers.filter((v) => !v.isInsurancePrivate);
+  const peerRentalRatio = ratio(known.filter((v) => v.hasRentalHistory).length, known.length);
+  const rentalTerm = input.hasRentalHistory === null || peerRentalRatio === null ? 0 : ((input.hasRentalHistory ? 1 : 0) - peerRentalRatio) * RENTAL_EFFECT;
+  const comp = AGE_EFFECT_PER_YEAR * ageGapMonths / 12 + MILEAGE_EFFECT_PER_10K * mileageGapKm / 10000 + rentalTerm;
+  let sd: number | null = null;
+  if (n >= 3) {
+    const lp = peers.map((v) => Math.log(v.price));
+    const m = lp.reduce((a, b) => a + b, 0) / n;
+    sd = Math.sqrt(lp.reduce((a, b) => a + (b - m) ** 2, 0) / (n - 1)) * 100;
+  }
+  return {
+    inputAgeMonths, peerMeanAgeMonths, ageGapMonths, peerMeanMileage, mileageGapKm, peerRentalRatio,
+    compositionPercent: Math.round(comp * 10) / 10,
+    peerLogSdPercent: sd, meanStdErrPercent: sd === null ? null : sd / Math.sqrt(n),
+  };
+}
+
+/** 요청별 판정 설정. 생략한 값은 환경변수(COMPARE_SPEC_MAX_ADJUST / COMPARE_PREMIUM_*) 기준 */
 export interface AnalyzeOptions { specMaxAdjust?: number; basePremium?: number; }
 
 export function analyzeComparison(
@@ -390,6 +417,7 @@ export function analyzeComparison(
   const accident = compareAccident(input, peers);
   const option = compareOptions(input, peers, match.criteria.trimApplied, match.basePool, peerOptionNames);
   const factors = buildQualityFactors(input, mileage, accident);
+  const diagnostics = computePriceDiagnostics(input, peers, now);
   return {
     input,
     criteria: match.criteria,
@@ -407,6 +435,8 @@ export function analyzeComparison(
       price.diffPercent, factors, input, accident.severity,
       computeSpecAdjustment(option.specDiffPercent, options.specMaxAdjust ?? specMaxAdjust()),
       options.basePremium ?? platformBasePremium(input.platform),
+      diagnostics.compositionPercent,
     ),
+    diagnostics,
   };
 }

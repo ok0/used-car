@@ -241,6 +241,19 @@ export interface OptionComparison {
 }
 export type QualityAxis = 'accident' | 'inspection' | 'owner' | 'mileage' | 'rental';
 export interface QualityFactor { axis: QualityAxis; points: number; reason: string; }
+/** 가격 비교 진단 (판정에는 미반영). compositionPercent = 동급 대비 차령·주행거리·렌트비율 차이만으로 예상되는 가격 차이(%) */
+export interface PriceDiagnostics {
+  inputAgeMonths: number;
+  peerMeanAgeMonths: number;
+  ageGapMonths: number;              // 입력 − 동급 평균 (양수 = 입력이 더 오래됨)
+  peerMeanMileage: number;
+  mileageGapKm: number;              // 입력 − 동급 평균
+  peerRentalRatio: number | null;    // 보험이력 공개 동급 중 렌트 이력 비율
+  compositionPercent: number;        // 소수 1자리 반올림
+  peerLogSdPercent: number | null;   // ln(동급 가격) 표본표준편차×100, 동급 3대 미만이면 null
+  meanStdErrPercent: number | null;  // peerLogSdPercent / sqrt(동급 수)
+}
+
 export interface VerdictDetail {
   verdict: CompareVerdict;
   diffPercent: number;
@@ -250,6 +263,7 @@ export interface VerdictDetail {
   qualityAdjustment: number;
   allowedPremium: number;
   excessOverAllowance: number;
+  compositionAdjustment: number;
   factors: QualityFactor[];
   criticalReasons: string[];
 }
@@ -267,6 +281,7 @@ export interface CompareResult {
   rental: RentalComparison;
   option: OptionComparison;
   judgement: VerdictDetail;
+  diagnostics: PriceDiagnostics;
 }
 
 /** 엔카 검색 API(SearchResults[]) 1건의 기본 정보 */

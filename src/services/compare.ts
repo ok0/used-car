@@ -3,7 +3,7 @@ import { HttpError, InvalidUrlError, fetchText } from '../crawler/fetch-helper';
 import { fetchHeydealerInput } from '../crawler/heydealer-parser';
 import { fetchHyundaiCertifiedInput } from '../crawler/hyundai-certified-parser';
 import { findMarketPeers, getMatchConfigFromEnv, type MatchConfig } from '../comparator/market-matcher';
-import { analyzeComparison, specMaxAdjust, platformBasePremium, BASE_PLATFORM_PREMIUM } from '../comparator/analyzer';
+import { analyzeComparison, specMaxAdjust, platformBasePremium, BASE_PLATFORM_PREMIUM, PLATFORM_PREMIUM_ENV } from '../comparator/analyzer';
 import { fmtYY } from '../cli/format';
 import type { ComparePlatform, CompareInput, CompareResult, CompareSettingsOverride, InspectionInfo, MarketMatch } from '../types';
 
@@ -149,17 +149,19 @@ export function applyOverrides(input: CompareInput, opts: CompareCliOptions): st
 
 // ───────── 비교 흐름 단계 (CLI는 단계 사이에 진행 메시지를 출력, 서버는 runCompare로 한 번에) ─────────
 
-export interface CompareSettings { matchConfig: MatchConfig; specMaxAdjust: number; hyundaiPremium: number; }
+export interface CompareSettings { matchConfig: MatchConfig; specMaxAdjust: number; hyundaiPremium: number; premiums: Record<ComparePlatform, number>; }
 
 /** 환경변수 검증 + 요청별 덮어쓰기 적용. 환경변수 오류 = INVALID_CONFIG, 덮어쓰기 값 오류 = INVALID_INPUT */
 export function resolveCompareSettings(override: CompareSettingsOverride = {}, env: NodeJS.ProcessEnv = process.env): CompareSettings {
   let base: MatchConfig;
   let spec: number;
+  let premiums: Record<ComparePlatform, number>;
   let hyundaiPremium: number;
   try {
     base = getMatchConfigFromEnv(env);
     spec = specMaxAdjust(env);
-    hyundaiPremium = platformBasePremium('hyundai_certified', env);
+    premiums = { heydealer: platformBasePremium('heydealer', env), kcar: platformBasePremium('kcar', env), hyundai_certified: platformBasePremium('hyundai_certified', env) };
+    hyundaiPremium = premiums.hyundai_certified;
   } catch (err) {
     throw new CompareError('INVALID_CONFIG', errMsg(err));
   }
@@ -181,6 +183,7 @@ export function resolveCompareSettings(override: CompareSettingsOverride = {}, e
     matchConfig: { minSamples: o.minSamples ?? base.minSamples, yearRange: o.yearRange ?? base.yearRange, mileageRatios },
     specMaxAdjust: o.specMaxAdjust ?? spec,
     hyundaiPremium,
+    premiums,
   };
 }
 
@@ -247,7 +250,7 @@ export function analyzeInput(input: CompareInput, settings: CompareSettings, now
     : undefined;
   const result = analyzeComparison(input, match, now, peerOptionNames, {
     specMaxAdjust: settings.specMaxAdjust,
-    basePremium: input.platform === 'hyundai_certified' ? settings.hyundaiPremium : BASE_PLATFORM_PREMIUM,
+    basePremium: settings.premiums[input.platform],
   });
   return { result, match };
 }
